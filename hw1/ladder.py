@@ -28,7 +28,7 @@ class Denoiser(NN.Module):
         self.a7 = Parameter(T.ones(size))
         self.a8 = Parameter(T.zeros(size))
         self.a9 = Parameter(T.zeros(size))
-        self.a10 = Parameter(T.zeros(size))
+        self.a10 = Parameter(T.ones(size))
 
     def forward(self, z, u):
         assert z.size() == u.size()
@@ -43,11 +43,11 @@ class Denoiser(NN.Module):
         return (z - mu) * nu + mu
 
 
-def noise(size, scale=0.1, center=0):
+def noise(size, scale=0.01, center=0):
     return Variable(T.randn(*size)) * scale + center
 
 
-def noised(x, scale=0.1, center=0):
+def noised(x, scale=0.01, center=0):
     return x + Variable(T.randn(*x.size())) * scale + center
 
 
@@ -71,7 +71,7 @@ class Ladder(NN.Module):
         self.add_module('g%d' % len(self.g), d)
         self.g.append(d)
 
-    def _add_stats(self, state_config, init_scale=0.01):
+    def _add_stats(self, state_config, init_scale=1):
         gamma = Parameter(T.randn(state_config) * init_scale, requires_grad=True)
         beta = Parameter(T.zeros(state_config), requires_grad=True)
         mean = Variable(T.zeros(state_config))
@@ -135,6 +135,9 @@ class Ladder(NN.Module):
             self._add_stats(layers[l])
         self._add_input_stats(layers[0])
 
+    def running_average(self, avg, new):
+        avg.data = (avg.data * (self.count - 1) + new.data) / self.count
+
     def batchnorm(self, x, l, path):
         '''
         Normalize @x by batch while updating the stats in layer @l.
@@ -144,14 +147,14 @@ class Ladder(NN.Module):
             mean = x.mean(0)
             var = x.var(0) * (batch_size - 1) / batch_size
             if path == 'clean':
-                self.mean[l] = (self.mean[l] * (self.count - 1) + mean) / self.count
-                self.var[l] = (self.var[l] * (self.count - 1) + var) / self.count
+                self.running_average(self.mean[l], mean)
+                self.running_average(self.var[l], var)
             elif path == 'noisy':
-                self.mean_noisy[l] = (self.mean_noisy[l] * (self.count - 1) + mean) / self.count
-                self.var_noisy[l] = (self.var_noisy[l] * (self.count - 1) + var) / self.count
+                self.running_average(self.mean_noisy[l], mean)
+                self.running_average(self.var_noisy[l], var)
             elif path == 'dec':
-                self.mean_dec[l] = (self.mean_dec[l] * (self.count - 1) + mean) / self.count
-                self.var_dec[l] = (self.var_dec[l] * (self.count - 1) + var) / self.count
+                self.running_average(self.mean_dec[l], mean)
+                self.running_average(self.var_dec[l], var)
             else:
                 assert False
         else:
@@ -234,7 +237,7 @@ class Ladder(NN.Module):
 
 
 model = Ladder([784, 300, 10], [0.001, 0.001, 0.001])
-opt = OPT.Adam(model.parameters())
+opt = OPT.Adam(model.parameters(), lr=1e-3)
 
 
 import cPickle
@@ -263,21 +266,16 @@ valid_loader = T.utils.data.DataLoader(valid_dataset, 64, True)
 def train_model():
     for E in range(0, 100):
         model.train()
-        for B, (data, target) in enumerate(labeled_loader):
+        for B, (data, target) in enumerate(train_loader):
             data = (Variable(data).float() / 255.).view(-1, 28 * 28)
             target = Variable(target)
             opt.zero_grad()
             y_tilde, rec_loss = model(data)
-            labeled_indices = (target.data != -1).nonzero()
-            # Requires Pull Request #829 to work
-            if len(labeled_indices.size()) == 0:
-                labeled_loss = 0
-            else:
-                labeled_indices = labeled_indices.squeeze(1)
-                y_tilde_labeled = y_tilde[labeled_indices]
-                target_labeled = target[labeled_indices]
-                labeled_loss = F.nll_loss(y_tilde_labeled, target_labeled)
-            loss = labeled_loss# + rec_loss
+            labeled_mask = (target != -1).unsqueeze(1)
+            y_tilde = y_tilde * labeled_mask.float().expand_as(y_tilde)
+            target = target * labeled_mask.long()
+            labeled_loss = F.nll_loss(y_tilde, target)
+            loss = labeled_loss + rec_loss
             assert not anynan(loss.data)
 
             loss.backward()
@@ -290,11 +288,11 @@ def train_model():
         valid_loss = 0
         acc = 0
         for B, (data, target) in enumerate(valid_loader):
-            data = (Variable(data).float() / 255.).view(-1, 28 * 28)
-            target = Variable(target)
+            data = (Variable(data, volatile=True).float() / 255.).view(-1, 28 * 28)
+            target = Variable(target, volatile=True)
             y_tilde, rec_loss = model(data)
             loss = F.nll_loss(y_tilde, target)
-            valid_loss += loss.data[0]
+            valid_loss += loss.data[0] * data.size()[0]
             acc += (y_tilde.data.numpy().argmax(axis=1) == target.data.numpy()).sum()
             del data, target, y_tilde
         valid_loss /= len(valid_loader.dataset)
