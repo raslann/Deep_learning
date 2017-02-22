@@ -269,6 +269,7 @@ def train_model():
             opt.zero_grad()
             y_tilde, rec_loss = model(data)
             labeled_indices = (target.data != -1).nonzero()
+            # Requires Pull Request #829 to work
             if len(labeled_indices.size()) == 0:
                 labeled_loss = 0
             else:
