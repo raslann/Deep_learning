@@ -71,7 +71,7 @@ class Ladder(NN.Module):
         self.add_module('g%d' % len(self.g), d)
         self.g.append(d)
 
-    def _add_stats(self, state_config, init_scale=0.1):
+    def _add_stats(self, state_config, init_scale=0.01):
         gamma = Parameter(T.randn(state_config) * init_scale, requires_grad=True)
         beta = Parameter(T.zeros(state_config), requires_grad=True)
         mean = Variable(T.zeros(state_config))
@@ -167,8 +167,9 @@ class Ladder(NN.Module):
             else:
                 assert False
 
-        std = var.sqrt()
-        return (x - mean.expand_as(x)) / (std.expand_as(x) + _eps)
+        std = (var + _eps).sqrt()
+        assert (std.data == 0).sum() == 0
+        return (x - mean.expand_as(x)) / std.expand_as(x)
 
     def forward(self, x):
         self.count += 1
@@ -197,12 +198,16 @@ class Ladder(NN.Module):
 
         h[0] = z[0] = self.batchnorm(x, 0, 'clean')
         mu[0] = z[0].mean(0)
-        sigma[0] = (z[0].var(0) * (batch_size - 1) / batch_size).sqrt()
+        sigma[0] = (z[0].var(0) * (batch_size - 1) / batch_size + _eps).sqrt()
 
         for l in range(1, self.L + 1):
             z_pre[l] = self.W[l](h[l - 1])
-            mu[l] = z_pre[l].mean(0)
-            sigma[l] = (z_pre[l].var(0) * (batch_size - 1) / batch_size).sqrt()
+            if self.training:
+                mu[l] = z_pre[l].mean(0)
+                sigma[l] = (z_pre[l].var(0) * (batch_size - 1) / batch_size + _eps).sqrt()
+            else:
+                mu[l] = self.mean[l].unsqueeze(0)
+                sigma[l] = (self.var[l] * (batch_size - 1) / batch_size + _eps).sqrt().unsqueeze(0)
             z[l] = self.batchnorm(self.W[l](h[l - 1]), l, 'clean')
             _beta = self.beta[l].unsqueeze(0).expand_as(z_tilde[l])
             _gamma = self.gamma[l].unsqueeze(0).expand_as(z_tilde[l])
@@ -218,16 +223,17 @@ class Ladder(NN.Module):
             z_hat[l] = self.g[l](z_tilde[l], u[l])
             _mu = mu[l].expand_as(z_hat[l])
             _sigma = sigma[l].expand_as(z_hat[l])
-            z_hat_bn[l] = (z_hat[l] - _mu) / (_sigma + _eps)
+            assert (_sigma.data == 0).sum() == 0
+            z_hat_bn[l] = (z_hat[l] - _mu) / _sigma
 
         rec_loss = 0
         for l in range(0, self.L + 1):
-            rec_loss = self.lambda_[l] * ((z[l] - z_hat_bn[l]) ** 2).mean()
+            rec_loss += self.lambda_[l] * ((z[l] - z_hat_bn[l]) ** 2).mean()
 
         return y_tilde, rec_loss
 
 
-model = Ladder([784, 300, 10], [10, 1, 0.1])
+model = Ladder([784, 300, 10], [0.001, 0.001, 0.001])
 opt = OPT.Adam(model.parameters())
 
 
@@ -257,23 +263,27 @@ valid_loader = T.utils.data.DataLoader(valid_dataset, 64, True)
 def train_model():
     for E in range(0, 100):
         model.train()
-        for B, (data, target) in enumerate(train_loader):
+        for B, (data, target) in enumerate(labeled_loader):
             data = (Variable(data).float() / 255.).view(-1, 28 * 28)
             target = Variable(target)
             opt.zero_grad()
             y_tilde, rec_loss = model(data)
-            labeled_mask = (target != -1).long()
-            target_masked = target * labeled_mask
-            y_tilde_masked = y_tilde * labeled_mask.unsqueeze(1).expand_as(y_tilde).float()
-            labeled_loss = F.nll_loss(y_tilde_masked, target_masked)
-            loss = labeled_loss + rec_loss
+            labeled_indices = (target.data != -1).nonzero()
+            if len(labeled_indices.size()) == 0:
+                labeled_loss = 0
+            else:
+                labeled_indices = labeled_indices.squeeze(1)
+                y_tilde_labeled = y_tilde[labeled_indices]
+                target_labeled = target[labeled_indices]
+                labeled_loss = F.nll_loss(y_tilde_labeled, target_labeled)
+            loss = labeled_loss# + rec_loss
             assert not anynan(loss.data)
 
             loss.backward()
             for p in model.parameters():
                 assert not anynan(p.grad.data)
             opt.step()
-            print '#%05d      %.5f' % (B, loss.data.numpy())
+            print '#%05d      %.5f' % (B, loss.data[0])
 
         model.eval()
         valid_loss = 0
@@ -283,9 +293,10 @@ def train_model():
             target = Variable(target)
             y_tilde, rec_loss = model(data)
             loss = F.nll_loss(y_tilde, target)
-            valid_loss += loss
+            valid_loss += loss.data[0]
             acc += (y_tilde.data.numpy().argmax(axis=1) == target.data.numpy()).sum()
+            del data, target, y_tilde
         valid_loss /= len(valid_loader.dataset)
-        print '@%05d      %.5f (%d)' % (E, valid_loss.data.numpy(), acc)
+        print '@%05d      %.5f (%d)' % (E, valid_loss, acc)
 
 train_model()
