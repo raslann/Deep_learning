@@ -291,10 +291,12 @@ def fetch():
 
 
 def train_model():
+    iteration = 0
     for E in range(0, 100):
         model.train()
         model.reset_stats()
         for B in range(0, 600):
+            iteration += 1
             (data_l, target_l), (data_u, target_u) = fetch()
             data = T.cat([data_l, data_u])
             target = T.cat([target_l, target_u])
@@ -303,10 +305,14 @@ def train_model():
             opt.zero_grad()
             y_tilde, _, rec_loss = model(data)
             labeled_mask = (target != -1).unsqueeze(1)
+            unlabeled_mask = (target > -1).unsqueeze(1)
             y_tilde = y_tilde * labeled_mask.float().expand_as(y_tilde)
             target = target * labeled_mask.long()
             labeled_loss = F.nll_loss(y_tilde, target)
-            loss = labeled_loss + rec_loss
+            pseudo_labeled_loss = y_tilde.max(1)[0]
+            pseudo_labeled_loss = ((pseudo_labeled_loss * unlabeled_mask.float()) * \
+                                   NP.min((.001, 1e-7*iteration))).mean()
+            loss = labeled_loss + rec_loss * 10 - pseudo_labeled_loss
             assert not anynan(loss.data)
 
             loss.backward()
