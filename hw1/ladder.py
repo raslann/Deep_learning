@@ -9,7 +9,7 @@ import numpy as NP
 import six
 
 from util import alloc_list, anynan, noise, noised
-from dataset import fetch
+from dataset import fetch, valid_loader
 
 _eps = 1e-8
 
@@ -245,8 +245,8 @@ def train_model():
         model.reset_stats()
         for B in range(0, 600):
             (data_l, target_l), (data_u, target_u) = fetch()
-            data = T.cat([data_l, data_u])
-            target = T.cat([target_l, target_u])
+            data = T.cat([data_l])
+            target = T.cat([target_l])
             data = (Variable(data).float() / 255.).view(-1, 28 * 28)
             target = Variable(target)
             opt.zero_grad()
