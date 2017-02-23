@@ -29,7 +29,7 @@ class Denoiser(NN.Module):
         self.a7 = Parameter(T.ones(size))
         self.a8 = Parameter(T.zeros(size))
         self.a9 = Parameter(T.zeros(size))
-        self.a10 = Parameter(T.ones(size))
+        self.a10 = Parameter(T.zeros(size))
 
     def forward(self, z, u):
         assert z.size() == u.size()
@@ -44,11 +44,11 @@ class Denoiser(NN.Module):
         return (z - mu) * nu + mu
 
 
-def noise(size, scale=0.01, center=0):
+def noise(size, scale=0.3, center=0):
     return Variable(T.randn(*size)) * scale + center
 
 
-def noised(x, scale=0.01, center=0):
+def noised(x, scale=0.3, center=0):
     return x + Variable(T.randn(*x.size())) * scale + center
 
 
@@ -72,8 +72,8 @@ class Ladder(NN.Module):
         self.add_module('g%d' % len(self.g), d)
         self.g.append(d)
 
-    def _add_stats(self, state_config, init_scale=1):
-        gamma = Parameter(T.randn(state_config) * init_scale, requires_grad=True)
+    def _add_stats(self, state_config):
+        gamma = Parameter(T.ones(state_config), requires_grad=True)
         beta = Parameter(T.zeros(state_config), requires_grad=True)
         mean = Variable(T.zeros(state_config))
         var = Variable(T.zeros(state_config))
