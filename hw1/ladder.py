@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch.nn import Parameter
 import torch.optim as OPT
 import numpy as NP
+import six
 
 _eps = 1e-8
 
@@ -189,7 +190,7 @@ class Ladder(NN.Module):
         z_hat = alloc_list(self.L + 1)
         z_hat_bn = alloc_list(self.L + 1)
 
-        h_tilde[0] = z_tilde[0] = noised(self.batchnorm(x, 0, 'noisy'))
+        h_tilde[0] = z_tilde[0] = noised(x)
 
         for l in range(1, self.L + 1):
             z_tilde[l] = noised(self.batchnorm(self.W[l](h_tilde[l - 1]), l, 'noisy'))
@@ -199,7 +200,7 @@ class Ladder(NN.Module):
 
         y_tilde = h_tilde[self.L]
 
-        h[0] = z[0] = self.batchnorm(x, 0, 'clean')
+        h[0] = z[0] = x
         mu[0] = z[0].mean(0)
         sigma[0] = (z[0].var(0) * (batch_size - 1) / batch_size + _eps).sqrt()
 
@@ -224,32 +225,38 @@ class Ladder(NN.Module):
             else:
                 u[l] = self.batchnorm(self.V[l + 1](z_hat[l + 1]), l, 'dec')
             z_hat[l] = self.g[l](z_tilde[l], u[l])
-            _mu = mu[l].expand_as(z_hat[l])
-            _sigma = sigma[l].expand_as(z_hat[l])
-            assert (_sigma.data == 0).sum() == 0
-            z_hat_bn[l] = (z_hat[l] - _mu) / _sigma
+            if l != 0:
+                # Seems that they are not normalizing z_hat on the
+                # first layer...
+                _mu = mu[l].expand_as(z_hat[l])
+                _sigma = sigma[l].expand_as(z_hat[l])
+                assert (_sigma.data == 0).sum() == 0
+                z_hat_bn[l] = (z_hat[l] - _mu) / _sigma
+            else:
+                z_hat_bn[l] = z_hat[l]
 
         rec_loss = 0
         for l in range(0, self.L + 1):
             rec_loss += self.lambda_[l] * ((z[l] - z_hat_bn[l]) ** 2).mean()
 
-        return y_tilde, rec_loss
+        return y_tilde, y, rec_loss
 
     def reset_stats(self):
         self.count = 0
 
 
-model = Ladder([784, 300, 10], [0.001, 0.001, 0.001])
+model = Ladder([784, 1000, 500, 250, 250, 250, 10],
+               [1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1])
 opt = OPT.Adam(model.parameters(), lr=1e-3)
 
 
-import cPickle
+import pickle
 with open('train_labeled.p', 'rb') as f:
-    train_labeled = cPickle.load(f)
+    train_labeled = pickle.load(f)
 with open('train_unlabeled.p', 'rb') as f:
-    train_unlabeled = cPickle.load(f)
+    train_unlabeled = pickle.load(f)
 with open('validation.p', 'rb') as f:
-    valid = cPickle.load(f)
+    valid = pickle.load(f)
 
 train_labeled_data = train_labeled.train_data
 train_unlabeled_data = train_unlabeled.train_data
@@ -259,22 +266,42 @@ train_unlabeled_labels = T.zeros(train_unlabeled_data.size()[0]).long() - 1
 train_labels = T.cat((train_labeled_labels, train_unlabeled_labels))
 
 labeled_dataset = T.utils.data.TensorDataset(train_labeled_data, train_labeled_labels)
+unlabeled_dataset = T.utils.data.TensorDataset(train_unlabeled_data, train_unlabeled_labels)
 train_dataset = T.utils.data.TensorDataset(train_data, train_labels)
 valid_dataset = T.utils.data.TensorDataset(valid.test_data, valid.test_labels)
-labeled_loader = T.utils.data.DataLoader(labeled_dataset, 64, True)
-train_loader = T.utils.data.DataLoader(train_dataset, 64, True)
-valid_loader = T.utils.data.DataLoader(valid_dataset, 64, True)
+labeled_loader = T.utils.data.DataLoader(labeled_dataset, 100, True)
+unlabeled_loader = T.utils.data.DataLoader(unlabeled_dataset, 100, True)
+train_loader = T.utils.data.DataLoader(train_dataset, 100, True)
+valid_loader = T.utils.data.DataLoader(valid_dataset, 100, True)
+
+labeled_gen = iter(labeled_loader)
+unlabeled_gen = iter(unlabeled_loader)
+
+
+def fetch():
+    global labeled_gen, unlabeled_gen
+
+    # Refresh
+    if labeled_gen.samples_remaining == 0:
+        labeled_gen = iter(labeled_loader)
+    if unlabeled_gen.samples_remaining == 0:
+        unlabeled_gen = iter(unlabeled_loader)
+
+    return six.next(labeled_gen), six.next(unlabeled_gen)
 
 
 def train_model():
     for E in range(0, 100):
         model.train()
         model.reset_stats()
-        for B, (data, target) in enumerate(train_loader):
+        for B in range(0, 600):
+            (data_l, target_l), (data_u, target_u) = fetch()
+            data = T.cat([data_l, data_u])
+            target = T.cat([target_l, target_u])
             data = (Variable(data).float() / 255.).view(-1, 28 * 28)
             target = Variable(target)
             opt.zero_grad()
-            y_tilde, rec_loss = model(data)
+            y_tilde, _, rec_loss = model(data)
             labeled_mask = (target != -1).unsqueeze(1)
             y_tilde = y_tilde * labeled_mask.float().expand_as(y_tilde)
             target = target * labeled_mask.long()
@@ -286,7 +313,7 @@ def train_model():
             for p in model.parameters():
                 assert not anynan(p.grad.data)
             opt.step()
-            print '#%05d      %.5f' % (B, loss.data[0])
+            six.print_('#%05d      %.5f' % (B, loss.data[0]))
 
         model.eval()
         valid_loss = 0
@@ -294,12 +321,11 @@ def train_model():
         for B, (data, target) in enumerate(valid_loader):
             data = (Variable(data, volatile=True).float() / 255.).view(-1, 28 * 28)
             target = Variable(target, volatile=True)
-            y_tilde, rec_loss = model(data)
-            loss = F.nll_loss(y_tilde, target)
+            y_tilde, y, rec_loss = model(data)
+            loss = F.nll_loss(y, target)
             valid_loss += loss.data[0] * data.size()[0]
-            acc += (y_tilde.data.numpy().argmax(axis=1) == target.data.numpy()).sum()
-            del data, target, y_tilde
+            acc += (y.data.numpy().argmax(axis=1) == target.data.numpy()).sum()
         valid_loss /= len(valid_loader.dataset)
-        print '@%05d      %.5f (%d)' % (E, valid_loss, acc)
+        six.print_('@%05d      %.5f (%d)' % (E, valid_loss, acc))
 
 train_model()
