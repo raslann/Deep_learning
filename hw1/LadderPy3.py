@@ -236,7 +236,7 @@ class Ladder(NN.Module):
         return y_tilde, rec_loss
 
 
-model = Ladder([784, 300, 10], [0.001, 0.001, 0.001])
+model = Ladder([784, 500, 300, 100, 10], [0.001, 0.001, 0.001, 0.001, 0.001])
 opt = OPT.Adam(model.parameters(), lr=1e-3)
 import pickle 
 
@@ -286,7 +286,7 @@ def train_model():
             labeled_loss = F.nll_loss(y_tilde, target)
             psuedo_labeled_loss = y_tilde.max(1)[0]
             psuedo_labeled_loss = ((psuedo_labeled_loss * unlabeled_mask.float()) * \
-                                   NP.max((.1, 1e-4*iteration))).mean()
+                                   NP.min((.001, 1e-6*iteration))).mean()
             loss = labeled_loss + rec_loss*10 - psuedo_labeled_loss
             assert not anynan(loss.data)
 
@@ -294,7 +294,7 @@ def train_model():
             for p in model.parameters():
                 assert not anynan(p.grad.data)
             opt.step()
-            print('#%05d      %.5f' % (B, loss.data[0]))
+            #print('#%05d      %.5f' % (B, loss.data[0]))
 
         model.eval()
         valid_loss = 0
@@ -308,6 +308,8 @@ def train_model():
             acc += (y_tilde.data.numpy().argmax(axis=1) == target.data.numpy()).sum()
             del data, target, y_tilde
         valid_loss /= len(valid_loader.dataset)
+        #acc /= 
         print('@%05d      %.5f (%d)' % (E, valid_loss, acc))
+        print(len(valid_loader.dataset))
 
 train_model()
