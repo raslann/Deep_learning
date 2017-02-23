@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch.nn import Parameter
 import torch.optim as OPT
 import numpy as NP
+import six
 
 from util import alloc_list, anynan, noise, noised
 from dataset import fetch
