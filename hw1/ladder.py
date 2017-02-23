@@ -235,6 +235,9 @@ class Ladder(NN.Module):
 
         return y_tilde, rec_loss
 
+    def reset_stats(self):
+        self.count = 0
+
 
 model = Ladder([784, 300, 10], [0.001, 0.001, 0.001])
 opt = OPT.Adam(model.parameters(), lr=1e-3)
@@ -266,6 +269,7 @@ valid_loader = T.utils.data.DataLoader(valid_dataset, 64, True)
 def train_model():
     for E in range(0, 100):
         model.train()
+        model.reset_stats()
         for B, (data, target) in enumerate(train_loader):
             data = (Variable(data).float() / 255.).view(-1, 28 * 28)
             target = Variable(target)
