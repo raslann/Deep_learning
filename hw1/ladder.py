@@ -6,15 +6,11 @@ import torch.nn.functional as F
 from torch.nn import Parameter
 import torch.optim as OPT
 import numpy as NP
-import six
+
+from util import alloc_list, anynan, noise, noised
+from dataset import fetch
 
 _eps = 1e-8
-
-def alloc_list(n):
-    return [None] * n
-
-def anynan(t):
-    return (t != t).sum() > 0
 
 class Denoiser(NN.Module):
     def __init__(self, *size):
@@ -29,7 +25,7 @@ class Denoiser(NN.Module):
         self.a7 = Parameter(T.ones(size))
         self.a8 = Parameter(T.zeros(size))
         self.a9 = Parameter(T.zeros(size))
-        self.a10 = Parameter(T.ones(size))
+        self.a10 = Parameter(T.zeros(size))
 
     def forward(self, z, u):
         assert z.size() == u.size()
@@ -42,14 +38,6 @@ class Denoiser(NN.Module):
         nu = a[6] * F.sigmoid(a[7] * u + a[8]) + a[9] * u + a[10]
 
         return (z - mu) * nu + mu
-
-
-def noise(size, scale=0.01, center=0):
-    return Variable(T.randn(*size)) * scale + center
-
-
-def noised(x, scale=0.01, center=0):
-    return x + Variable(T.randn(*x.size())) * scale + center
 
 
 class Ladder(NN.Module):
@@ -72,8 +60,8 @@ class Ladder(NN.Module):
         self.add_module('g%d' % len(self.g), d)
         self.g.append(d)
 
-    def _add_stats(self, state_config, init_scale=1):
-        gamma = Parameter(T.randn(state_config) * init_scale, requires_grad=True)
+    def _add_stats(self, state_config):
+        gamma = Parameter(T.ones(state_config), requires_grad=True)
         beta = Parameter(T.zeros(state_config), requires_grad=True)
         mean = Variable(T.zeros(state_config))
         var = Variable(T.zeros(state_config))
@@ -248,46 +236,6 @@ class Ladder(NN.Module):
 model = Ladder([784, 1000, 500, 250, 250, 250, 10],
                [1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1])
 opt = OPT.Adam(model.parameters(), lr=1e-3)
-
-
-import pickle
-with open('train_labeled.p', 'rb') as f:
-    train_labeled = pickle.load(f)
-with open('train_unlabeled.p', 'rb') as f:
-    train_unlabeled = pickle.load(f)
-with open('validation.p', 'rb') as f:
-    valid = pickle.load(f)
-
-train_labeled_data = train_labeled.train_data
-train_unlabeled_data = train_unlabeled.train_data
-train_data = T.cat((train_labeled_data, train_unlabeled_data))
-train_labeled_labels = train_labeled.train_labels
-train_unlabeled_labels = T.zeros(train_unlabeled_data.size()[0]).long() - 1
-train_labels = T.cat((train_labeled_labels, train_unlabeled_labels))
-
-labeled_dataset = T.utils.data.TensorDataset(train_labeled_data, train_labeled_labels)
-unlabeled_dataset = T.utils.data.TensorDataset(train_unlabeled_data, train_unlabeled_labels)
-train_dataset = T.utils.data.TensorDataset(train_data, train_labels)
-valid_dataset = T.utils.data.TensorDataset(valid.test_data, valid.test_labels)
-labeled_loader = T.utils.data.DataLoader(labeled_dataset, 100, True)
-unlabeled_loader = T.utils.data.DataLoader(unlabeled_dataset, 100, True)
-train_loader = T.utils.data.DataLoader(train_dataset, 100, True)
-valid_loader = T.utils.data.DataLoader(valid_dataset, 100, True)
-
-labeled_gen = iter(labeled_loader)
-unlabeled_gen = iter(unlabeled_loader)
-
-
-def fetch():
-    global labeled_gen, unlabeled_gen
-
-    # Refresh
-    if labeled_gen.samples_remaining == 0:
-        labeled_gen = iter(labeled_loader)
-    if unlabeled_gen.samples_remaining == 0:
-        unlabeled_gen = iter(unlabeled_loader)
-
-    return six.next(labeled_gen), six.next(unlabeled_gen)
 
 
 def train_model():
