@@ -281,12 +281,11 @@ def train_model():
             labeled_mask = (target != -1).unsqueeze(1)
             unlabeled_mask = (target > -1).unsqueeze(1)
             y_tilde = y_tilde * labeled_mask.float().expand_as(y_tilde)
-            #y_tilde_unlabeled = y_tilde * unlabeled_mask.float().expand_as(y_tilde)
             target = target * labeled_mask.long()
             labeled_loss = F.nll_loss(y_tilde, target)
             psuedo_labeled_loss = y_tilde.max(1)[0]
             psuedo_labeled_loss = ((psuedo_labeled_loss * unlabeled_mask.float()) * \
-                                   NP.min((.001, 1e-6*iteration))).mean()
+                                   NP.min((.001, 1e-7*iteration))).mean()
             loss = labeled_loss + rec_loss*10 - psuedo_labeled_loss
             assert not anynan(loss.data)
 
@@ -308,7 +307,6 @@ def train_model():
             acc += (y_tilde.data.numpy().argmax(axis=1) == target.data.numpy()).sum()
             del data, target, y_tilde
         valid_loss /= len(valid_loader.dataset)
-        #acc /= 
         print('@%05d      %.5f (%d)' % (E, valid_loss, acc))
         print(len(valid_loader.dataset))
 
