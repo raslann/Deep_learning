@@ -249,7 +249,7 @@ model = Ladder([784, 1000, 500, 250, 250, 250, 10],
                [1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1])
 opt = OPT.Adam(model.parameters(), lr=1e-3)
 
-
+args.unlabeled = True
 def train_model():
     for E in range(0, 100):
         model.train()
@@ -267,10 +267,15 @@ def train_model():
             opt.zero_grad()
             y_tilde, _, rec_loss = model(data)
             labeled_mask = (target != -1).unsqueeze(1)
+            unlabeled_mask = (target == -1).unsqueeze(1)
+            y_tilde_unlabeled = y_tilde * unlabeled_mask.float().expand_as(y_tilde)
             y_tilde = y_tilde * labeled_mask.float().expand_as(y_tilde)
             target = target * labeled_mask.long()
             labeled_loss = F.nll_loss(y_tilde, target)
-            loss = labeled_loss + rec_loss
+            pseudo_labeled_loss = y_tilde_unlabeled.max(1)[0]
+            pseudo_labeled_loss = ((pseudo_labeled_loss * unlabeled_mask.float())* \
+                                  NP.min((.5, 1e-1*(E+.1)))).mean()
+            loss = labeled_loss + rec_loss - pseudo_labeled_loss
             assert not anynan(loss.data)
 
             loss.backward()
