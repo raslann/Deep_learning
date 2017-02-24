@@ -254,7 +254,7 @@ def train_model():
     for E in range(0, 100):
         model.train()
         model.reset_stats()
-        for B in range(0, 600):
+        for B in range(0, 600 if args.unlabeled else 30):
             (data_l, target_l), (data_u, target_u) = fetch()
             if args.unlabeled:
                 data = T.cat([data_l, data_u])
