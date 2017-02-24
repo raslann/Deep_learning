@@ -9,13 +9,19 @@ import numpy as NP
 import six
 import argparse
 
+
+# TODO: make an argparse Parser to parse arguments
+parser = argparse.ArgumentParser()
+parser.add_argument("--unlabeled",
+                    help="use unlabeled data",
+                    action="store_true")
+
+args = parser.parse_args()
+
 from util import alloc_list, anynan, noise, noised
 from dataset import fetch, valid_loader
 
 _eps = 1e-8
-
-# TODO: make an argparse Parser to parse arguments
-unlabeled = True
 
 
 class Denoiser(NN.Module):
@@ -250,7 +256,7 @@ def train_model():
         model.reset_stats()
         for B in range(0, 600):
             (data_l, target_l), (data_u, target_u) = fetch()
-            if unlabeled:
+            if args.unlabeled:
                 data = T.cat([data_l, data_u])
                 target = T.cat([target_l, target_u])
             else:
