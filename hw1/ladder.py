@@ -8,6 +8,7 @@ import torch.optim as OPT
 import numpy as NP
 import six
 import argparse
+import pickle
 
 
 # TODO: make an argparse Parser to parse arguments
@@ -15,6 +16,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--unlabeled",
                     help="use unlabeled data",
                     action="store_true")
+parser.add_argument("--pseudolabels",
+                    help="use pseudo-labels",
+                    action="store_true")
+parser.add_argument("--modelname",
+                    help="model name",
+                    type=str)
+parser.add_argument("--loadmodel",
+                    help="file to load model from for continuation",
+                    type=str)
 
 args = parser.parse_args()
 
@@ -52,24 +62,57 @@ class Denoiser(NN.Module):
         return (z - mu) * nu + mu
 
 
+class BufferList(NN.Module):
+    def __init__(self, buffers=None):
+        super(BufferList, self).__init__()
+        if buffers is not None:
+            self += buffers
+
+    def __getitem__(self, idx):
+        if idx < 0:
+            idx += len(self)
+        return self._buffers[str(idx)]
+
+    def __setitem__(self, idx, buf):
+        return self.register_buffer(str(idx), buf)
+
+    def __len__(self):
+        return len(self._buffers)
+
+    def __iter__(self):
+        return iter(self._buffers.values())
+
+    def __iadd__(self, buffers):
+        return self.extend(buffers)
+
+    def append(self, buf):
+        self.register_buffer(str(len(self)), buf)
+        return self
+
+    def extend(self, buffers):
+        if not isinstance(buffers, list):
+            raise TypeError("ParameterList.extend should be called with a "
+                            "list, but got " + type(buffers).__name__)
+        offset = len(self)
+        for i, buf in enumerate(buffers):
+            self.register_buffer(str(offset + i), buf)
+        return self
+
+
 class Ladder(NN.Module):
     def _add_W(self, input_config, output_config):
         l = NN.Linear(input_config, output_config)
-        self.add_module('W%d' % len(self.W), l)
         self.W.append(l)
 
     def _add_act(self, act_module):
-        self.add_module('A%d' % len(self.act), act_module)
         self.act.append(act_module)
 
     def _add_V(self, input_config, output_config):
         l = NN.Linear(input_config, output_config)
-        self.add_module('V%d' % (self.L - len(self.V) + 1), l)
         self.V.append(l)
 
     def _add_g(self, state_config):
         d = Denoiser(state_config)
-        self.add_module('g%d' % len(self.g), d)
         self.g.append(d)
 
     def _add_stats(self, state_config):
@@ -82,9 +125,6 @@ class Ladder(NN.Module):
         mean_dec = Variable(T.zeros(state_config))
         var_dec = Variable(T.zeros(state_config))
 
-        self.register_parameter('gamma%d' % len(self.gamma), gamma)
-        self.register_parameter('beta%d' % len(self.beta), beta)
-
         self.gamma.append(gamma)
         self.beta.append(beta)
         self.mean.append(mean)
@@ -95,12 +135,12 @@ class Ladder(NN.Module):
         self.var_dec.append(var_dec)
 
     def _add_input_stats(self, input_config):
-        self.mean_noisy.insert(0, Variable(T.zeros(input_config)))
-        self.var_noisy.insert(0, Variable(T.zeros(input_config)))
-        self.mean.insert(0, Variable(T.zeros(input_config)))
-        self.var.insert(0, Variable(T.zeros(input_config)))
-        self.mean_dec.insert(0, Variable(T.zeros(input_config)))
-        self.var_dec.insert(0, Variable(T.zeros(input_config)))
+        self.mean_noisy.append(Variable(T.zeros(input_config)))
+        self.var_noisy.append(Variable(T.zeros(input_config)))
+        self.mean.append(Variable(T.zeros(input_config)))
+        self.var.append(Variable(T.zeros(input_config)))
+        self.mean_dec.append(Variable(T.zeros(input_config)))
+        self.var_dec.append(Variable(T.zeros(input_config)))
 
     def __init__(self, layers, lambda_):
         '''
@@ -113,28 +153,28 @@ class Ladder(NN.Module):
         self.L = len(layers) - 1
         self.lambda_ = lambda_
 
-        self.W = [None]
-        self.act = [None]
-        self.V = [None]
-        self.g = []
-        self.gamma = [None]
-        self.beta = [None]
-        self.mean_noisy = []
-        self.var_noisy = []
-        self.mean = []
-        self.var = []
-        self.mean_dec = []
-        self.var_dec = []
+        self.W = NN.ModuleList([None])
+        self.act = NN.ModuleList([None])
+        self.V = NN.ModuleList([None])
+        self.g = NN.ModuleList([])
+        self.gamma = NN.ParameterList([None])
+        self.beta = NN.ParameterList([None])
+        self.mean_noisy = BufferList([])
+        self.var_noisy = BufferList([])
+        self.mean = BufferList([])
+        self.var = BufferList([])
+        self.mean_dec = BufferList([])
+        self.var_dec = BufferList([])
         self.count = 0
 
         self._add_g(layers[0])    # g_0
+        self._add_input_stats(layers[0])
         for l in range(1, self.L + 1):
             self._add_W(layers[l - 1], layers[l])
             self._add_act(NN.ReLU() if l != self.L else NN.LogSoftmax())
             self._add_V(layers[l], layers[l - 1])
             self._add_g(layers[l])
             self._add_stats(layers[l])
-        self._add_input_stats(layers[0])
 
     def running_average(self, avg, new):
         avg.data = (avg.data * (self.count - 1) + new.data) / self.count
@@ -248,10 +288,12 @@ class Ladder(NN.Module):
 model = Ladder([784, 1000, 500, 250, 250, 250, 10],
                [1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1])
 opt = OPT.Adam(model.parameters(), lr=1e-3)
+best_acc = 0
 
-args.unlabeled = True
+
 def train_model():
-    for E in range(0, 100):
+    global best_acc
+    for E in range(0, 500):
         model.train()
         model.reset_stats()
         for B in range(0, 600 if args.unlabeled else 30):
@@ -266,16 +308,21 @@ def train_model():
             target = Variable(target)
             opt.zero_grad()
             y_tilde, _, rec_loss = model(data)
+
             labeled_mask = (target != -1).unsqueeze(1)
-            unlabeled_mask = (target == -1).unsqueeze(1)
-            y_tilde_unlabeled = y_tilde * unlabeled_mask.float().expand_as(y_tilde)
-            y_tilde = y_tilde * labeled_mask.float().expand_as(y_tilde)
+            y_tilde_labeled = y_tilde * labeled_mask.float().expand_as(y_tilde)
             target = target * labeled_mask.long()
-            labeled_loss = F.nll_loss(y_tilde, target)
-            pseudo_labeled_loss = y_tilde_unlabeled.max(1)[0]
-            pseudo_labeled_loss = ((pseudo_labeled_loss * unlabeled_mask.float())* \
-                                  NP.min((.5, 1e-1*(E+.1)))).mean()
-            loss = labeled_loss + rec_loss - pseudo_labeled_loss
+            labeled_loss = F.nll_loss(y_tilde_labeled, target)
+
+            if args.unlabeled and args.pseudolabels:
+                unlabeled_mask = (target == -1).unsqueeze(1)
+                y_tilde_unlabeled = y_tilde * unlabeled_mask.float().expand_as(y_tilde)
+                pseudo_labeled_loss = -y_tilde_unlabeled.max(1)[0]
+                pseudo_labeled_loss = ((pseudo_labeled_loss * unlabeled_mask.float())* \
+                                      NP.min((.5, 1e-1*(E+.1)))).mean()
+            else:
+                pseudo_labeled_loss = 0
+            loss = labeled_loss + rec_loss + pseudo_labeled_loss
             assert not anynan(loss.data)
 
             loss.backward()
@@ -297,4 +344,13 @@ def train_model():
         valid_loss /= len(valid_loader.dataset)
         six.print_('@%05d      %.5f (%d)' % (E, valid_loss, acc))
 
+        if best_acc < acc:
+            best_acc = acc
+            if args.modelname is not None:
+                with open('%s%d.p' % (args.modelname, E), 'wb') as f:
+                    T.save(model, f)
+
+if args.loadmodel is not None:
+    with open(args.loadmodel, 'rb') as f:
+        model = T.load(f)
 train_model()
