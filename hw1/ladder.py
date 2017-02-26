@@ -62,24 +62,57 @@ class Denoiser(NN.Module):
         return (z - mu) * nu + mu
 
 
+class BufferList(NN.Module):
+    def __init__(self, buffers=None):
+        super(BufferList, self).__init__()
+        if buffers is not None:
+            self += buffers
+
+    def __getitem__(self, idx):
+        if idx < 0:
+            idx += len(self)
+        return self._buffers[str(idx)]
+
+    def __setitem__(self, idx, buf):
+        return self.register_buffer(str(idx), buf)
+
+    def __len__(self):
+        return len(self._buffers)
+
+    def __iter__(self):
+        return iter(self._buffers.values())
+
+    def __iadd__(self, buffers):
+        return self.extend(buffers)
+
+    def append(self, buf):
+        self.register_buffer(str(len(self)), buf)
+        return self
+
+    def extend(self, buffers):
+        if not isinstance(buffers, list):
+            raise TypeError("ParameterList.extend should be called with a "
+                            "list, but got " + type(buffers).__name__)
+        offset = len(self)
+        for i, buf in enumerate(buffers):
+            self.register_buffer(str(offset + i), buf)
+        return self
+
+
 class Ladder(NN.Module):
     def _add_W(self, input_config, output_config):
         l = NN.Linear(input_config, output_config)
-        self.add_module('W%d' % len(self.W), l)
         self.W.append(l)
 
     def _add_act(self, act_module):
-        self.add_module('A%d' % len(self.act), act_module)
         self.act.append(act_module)
 
     def _add_V(self, input_config, output_config):
         l = NN.Linear(input_config, output_config)
-        self.add_module('V%d' % (self.L - len(self.V) + 1), l)
         self.V.append(l)
 
     def _add_g(self, state_config):
         d = Denoiser(state_config)
-        self.add_module('g%d' % len(self.g), d)
         self.g.append(d)
 
     def _add_stats(self, state_config):
@@ -92,15 +125,6 @@ class Ladder(NN.Module):
         mean_dec = Variable(T.zeros(state_config))
         var_dec = Variable(T.zeros(state_config))
 
-        self.register_parameter('gamma%d' % len(self.gamma), gamma)
-        self.register_parameter('beta%d' % len(self.beta), beta)
-        self.register_buffer('mean%d' % len(self.mean), mean)
-        self.register_buffer('var%d' % len(self.var), var)
-        self.register_buffer('mean_noisy%d' % len(self.mean_noisy), mean_noisy)
-        self.register_buffer('var_noisy%d' % len(self.var_noisy), var_noisy)
-        self.register_buffer('mean_dec%d' % len(self.mean_dec), mean_dec)
-        self.register_buffer('var_dec%d' % len(self.var_dec), var_dec)
-
         self.gamma.append(gamma)
         self.beta.append(beta)
         self.mean.append(mean)
@@ -111,19 +135,12 @@ class Ladder(NN.Module):
         self.var_dec.append(var_dec)
 
     def _add_input_stats(self, input_config):
-        self.mean_noisy.insert(0, Variable(T.zeros(input_config)))
-        self.var_noisy.insert(0, Variable(T.zeros(input_config)))
-        self.mean.insert(0, Variable(T.zeros(input_config)))
-        self.var.insert(0, Variable(T.zeros(input_config)))
-        self.mean_dec.insert(0, Variable(T.zeros(input_config)))
-        self.var_dec.insert(0, Variable(T.zeros(input_config)))
-
-        self.register_buffer('mean_in', self.mean[0])
-        self.register_buffer('var_in', self.var[0])
-        self.register_buffer('mean_noisy_in', self.mean_noisy[0])
-        self.register_buffer('var_noisy_in', self.var_noisy[0])
-        self.register_buffer('mean_dec_in', self.mean_dec[0])
-        self.register_buffer('var_dec_in', self.var_dec[0])
+        self.mean_noisy.append(Variable(T.zeros(input_config)))
+        self.var_noisy.append(Variable(T.zeros(input_config)))
+        self.mean.append(Variable(T.zeros(input_config)))
+        self.var.append(Variable(T.zeros(input_config)))
+        self.mean_dec.append(Variable(T.zeros(input_config)))
+        self.var_dec.append(Variable(T.zeros(input_config)))
 
     def __init__(self, layers, lambda_):
         '''
@@ -136,28 +153,28 @@ class Ladder(NN.Module):
         self.L = len(layers) - 1
         self.lambda_ = lambda_
 
-        self.W = [None]
-        self.act = [None]
-        self.V = [None]
-        self.g = []
-        self.gamma = [None]
-        self.beta = [None]
-        self.mean_noisy = []
-        self.var_noisy = []
-        self.mean = []
-        self.var = []
-        self.mean_dec = []
-        self.var_dec = []
+        self.W = NN.ModuleList([None])
+        self.act = NN.ModuleList([None])
+        self.V = NN.ModuleList([None])
+        self.g = NN.ModuleList([])
+        self.gamma = NN.ParameterList([None])
+        self.beta = NN.ParameterList([None])
+        self.mean_noisy = BufferList([])
+        self.var_noisy = BufferList([])
+        self.mean = BufferList([])
+        self.var = BufferList([])
+        self.mean_dec = BufferList([])
+        self.var_dec = BufferList([])
         self.count = 0
 
         self._add_g(layers[0])    # g_0
+        self._add_input_stats(layers[0])
         for l in range(1, self.L + 1):
             self._add_W(layers[l - 1], layers[l])
             self._add_act(NN.ReLU() if l != self.L else NN.LogSoftmax())
             self._add_V(layers[l], layers[l - 1])
             self._add_g(layers[l])
             self._add_stats(layers[l])
-        self._add_input_stats(layers[0])
 
     def running_average(self, avg, new):
         avg.data = (avg.data * (self.count - 1) + new.data) / self.count
@@ -331,9 +348,9 @@ def train_model():
             best_acc = acc
             if args.modelname is not None:
                 with open('%s%d.p' % (args.modelname, E), 'wb') as f:
-                    T.save(model, f, pickle)
+                    T.save(model, f)
 
 if args.loadmodel is not None:
     with open(args.loadmodel, 'rb') as f:
-        model = T.load(f, pickle)
+        model = T.load(f)
 train_model()
