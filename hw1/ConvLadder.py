@@ -295,7 +295,9 @@ class Ladder(NN.Module):
         self.count = 0
 
 
-model = Ladder([784, 1000, 500, 250, 250, 250, 10],
+        
+model = Ladder([784, ['Conv', 28, 10, 5], ['Pool', 2], ['Conv', 14, 20, 5], ['Pool', 2],
+                ['FC', 250], ['FC', 250], ['FC', 250], ['FC', 10]],
                [1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1])
 opt = OPT.Adam(model.parameters(), lr=1e-3)
 best_acc = 0
