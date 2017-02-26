@@ -8,6 +8,7 @@ import torch.optim as OPT
 import numpy as NP
 import six
 import argparse
+import pickle
 
 
 # TODO: make an argparse Parser to parse arguments
@@ -15,6 +16,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--unlabeled",
                     help="use unlabeled data",
                     action="store_true")
+parser.add_argument("--pseudolabels",
+                    help="use pseudo-labels",
+                    action="store_true")
+parser.add_argument("--modelname",
+                    help="model name",
+                    type=str)
+parser.add_argument("--loadmodel",
+                    help="file to load model from for continuation",
+                    type=str)
 
 args = parser.parse_args()
 
@@ -84,6 +94,12 @@ class Ladder(NN.Module):
 
         self.register_parameter('gamma%d' % len(self.gamma), gamma)
         self.register_parameter('beta%d' % len(self.beta), beta)
+        self.register_buffer('mean%d' % len(self.mean), mean)
+        self.register_buffer('var%d' % len(self.var), var)
+        self.register_buffer('mean_noisy%d' % len(self.mean_noisy), mean_noisy)
+        self.register_buffer('var_noisy%d' % len(self.var_noisy), var_noisy)
+        self.register_buffer('mean_dec%d' % len(self.mean_dec), mean_dec)
+        self.register_buffer('var_dec%d' % len(self.var_dec), var_dec)
 
         self.gamma.append(gamma)
         self.beta.append(beta)
@@ -101,6 +117,13 @@ class Ladder(NN.Module):
         self.var.insert(0, Variable(T.zeros(input_config)))
         self.mean_dec.insert(0, Variable(T.zeros(input_config)))
         self.var_dec.insert(0, Variable(T.zeros(input_config)))
+
+        self.register_buffer('mean_in', self.mean[0])
+        self.register_buffer('var_in', self.var[0])
+        self.register_buffer('mean_noisy_in', self.mean_noisy[0])
+        self.register_buffer('var_noisy_in', self.var_noisy[0])
+        self.register_buffer('mean_dec_in', self.mean_dec[0])
+        self.register_buffer('var_dec_in', self.var_dec[0])
 
     def __init__(self, layers, lambda_):
         '''
@@ -248,10 +271,12 @@ class Ladder(NN.Module):
 model = Ladder([784, 1000, 500, 250, 250, 250, 10],
                [1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1])
 opt = OPT.Adam(model.parameters(), lr=1e-3)
+best_acc = 0
 
-args.unlabeled = True
+
 def train_model():
-    for E in range(0, 100):
+    global best_acc
+    for E in range(0, 500):
         model.train()
         model.reset_stats()
         for B in range(0, 600 if args.unlabeled else 30):
@@ -266,16 +291,21 @@ def train_model():
             target = Variable(target)
             opt.zero_grad()
             y_tilde, _, rec_loss = model(data)
+
             labeled_mask = (target != -1).unsqueeze(1)
-            unlabeled_mask = (target == -1).unsqueeze(1)
-            y_tilde_unlabeled = y_tilde * unlabeled_mask.float().expand_as(y_tilde)
-            y_tilde = y_tilde * labeled_mask.float().expand_as(y_tilde)
+            y_tilde_labeled = y_tilde * labeled_mask.float().expand_as(y_tilde)
             target = target * labeled_mask.long()
-            labeled_loss = F.nll_loss(y_tilde, target)
-            pseudo_labeled_loss = y_tilde_unlabeled.max(1)[0]
-            pseudo_labeled_loss = ((pseudo_labeled_loss * unlabeled_mask.float())* \
-                                  NP.min((.5, 1e-1*(E+.1)))).mean()
-            loss = labeled_loss + rec_loss - pseudo_labeled_loss
+            labeled_loss = F.nll_loss(y_tilde_labeled, target)
+
+            if args.unlabeled and args.pseudolabels:
+                unlabeled_mask = (target == -1).unsqueeze(1)
+                y_tilde_unlabeled = y_tilde * unlabeled_mask.float().expand_as(y_tilde)
+                pseudo_labeled_loss = -y_tilde_unlabeled.max(1)[0]
+                pseudo_labeled_loss = ((pseudo_labeled_loss * unlabeled_mask.float())* \
+                                      NP.min((.5, 1e-1*(E+.1)))).mean()
+            else:
+                pseudo_labeled_loss = 0
+            loss = labeled_loss + rec_loss + pseudo_labeled_loss
             assert not anynan(loss.data)
 
             loss.backward()
@@ -297,4 +327,13 @@ def train_model():
         valid_loss /= len(valid_loader.dataset)
         six.print_('@%05d      %.5f (%d)' % (E, valid_loss, acc))
 
+        if best_acc < acc:
+            best_acc = acc
+            if args.modelname is not None:
+                with open('%s%d.p' % (args.modelname, E), 'wb') as f:
+                    T.save(model, f, pickle)
+
+if args.loadmodel is not None:
+    with open(args.loadmodel, 'rb') as f:
+        model = T.load(f, pickle)
 train_model()
