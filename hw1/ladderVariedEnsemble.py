@@ -293,18 +293,20 @@ class Ladder(NN.Module):
 
         return y_tilde, y, rec_loss
 
-    def reset_stats(self):
+    def train(self):
+        super(Ladder, self).train()
         self.count = 0
 
 num_models = 50
-models = NN.ModuleList([Ladder([784, 
+models = NN.DataParallel(NN.ModuleList([Ladder([784, 
                 800 + i * 8,
                 400 + i * 4, 
                 250 + i * 2, 
                 300 - i * 2 ,
                 200 + (i % 5) * 10,
                 10],
-               [1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1]) for i in range(num_models)])
+               [1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1]) for i in range(num_models)]),
+               device_ids=[0, 1, 2, 3])
 models.cuda()
 
 opt = OPT.Adam(models.parameters(), lr=1e-3)
@@ -318,9 +320,7 @@ rec_losses = [None]*num_models
 def train_model():
     global best_acc
     for E in range(0, 500):
-        for model in models:
-            model.train()
-            model.reset_stats()
+        models.train()
         for B in range(0, 600 if args.unlabeled else 30):
             (data_l, target_l), (data_u, target_u) = fetch()
             if args.unlabeled:
@@ -333,14 +333,14 @@ def train_model():
             target = Variable(target).cuda()
             opt.zero_grad()
             
-            for i, model in enumerate(models):
+            for i, model in enumerate(six.next(models.children())):
                 y_tilde, _, rec_loss = model(data)
                 y_tildes[i] = y_tilde
                 rec_losses[i] = rec_loss
 
             labeled_mask = (target != -1).unsqueeze(1)
             target = target * labeled_mask.long()
-            for i, model in enumerate(models):
+            for i, model in enumerate(six.next(models.children())):
                 y_tilde_labeleds[i] = y_tildes[i] * labeled_mask.float().expand_as(y_tildes[0])
                 labeled_losses[i] = F.nll_loss(y_tilde_labeleds[i], target)
             y_tilde_labeled_mean = sum(y_tilde_labeleds) / len(y_tilde_labeleds)
@@ -359,19 +359,17 @@ def train_model():
             assert not anynan(loss.data)
 
             loss.backward()
-            for p in model.parameters():
-                assert not anynan(p.grad.data)
             opt.step()
             #six.print_('#%05d      %.5f' % (B, loss.cpu().data[0]))
-        for model in models:
-            model.eval()
+
+        models.eval()
         valid_loss = 0
         acc = 0
         ys = [None]*num_models
         for B, (data, target) in enumerate(valid_loader):
             data = (Variable(data, volatile=True).float() / 255.).view(-1, 28 * 28).cuda()
             target = Variable(target, volatile=True).cuda()
-            for i, model in enumerate(models):
+            for i, model in enumerate(six.next(models.children())):
                 y_tilde, y, rec_loss = model(data)
                 ys[i] = y
             y = sum(ys) / num_models
@@ -385,9 +383,9 @@ def train_model():
             best_acc = acc
             if args.modelname is not None:
                 with open('%s%d.p' % (args.modelname, E), 'wb') as f:
-                    T.save(model, f)
+                    T.save(models, f)
 
 if args.loadmodel is not None:
     with open(args.loadmodel, 'rb') as f:
-        model = T.load(f)
+        models = T.load(f)
 train_model()
