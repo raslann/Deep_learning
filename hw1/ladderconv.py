@@ -6,32 +6,15 @@ import torch.nn.functional as F
 from torch.nn import Parameter
 import torch.optim as OPT
 import numpy as NP
+import numpy.random as RNG
 import six
-import argparse
 import pickle
 import json
 
-from modules import BufferList, GlobalAvgPool2d, GlobalUpsample2d
+from modules import BufferList, GlobalAvgPool2d, GlobalUpsample2d, Ensemble
 
-
-# TODO: make an argparse Parser to parse arguments
-parser = argparse.ArgumentParser()
-parser.add_argument("--unlabeled",
-                    help="use unlabeled data",
-                    action="store_true")
-parser.add_argument("--pseudolabels",
-                    help="use pseudo-labels",
-                    action="store_true")
-parser.add_argument("--modelname",
-                    help="model name",
-                    type=str)
-parser.add_argument("--loadmodel",
-                    help="file to load model from for continuation",
-                    type=str)
-
-args = parser.parse_args()
-
-from util import alloc_list, anynan, noise, noised
+from util import alloc_list, anynan, noise, noised, args, variable, var_to_numpy
+from util import batchnorm_mean_var
 from dataset import fetch, valid_loader
 
 _eps = 1e-8
@@ -108,12 +91,12 @@ class Ladder(NN.Module):
     def _add_stats(self, state_config):
         gamma = Parameter(T.ones(state_config), requires_grad=True)
         beta = Parameter(T.zeros(state_config), requires_grad=True)
-        mean = Variable(T.zeros(state_config))
-        var = Variable(T.zeros(state_config))
-        mean_noisy = Variable(T.zeros(state_config))
-        var_noisy = Variable(T.zeros(state_config))
-        mean_dec = Variable(T.zeros(state_config))
-        var_dec = Variable(T.zeros(state_config))
+        mean = T.zeros(state_config)
+        var = T.zeros(state_config)
+        mean_noisy = T.zeros(state_config)
+        var_noisy = T.zeros(state_config)
+        mean_dec = T.zeros(state_config)
+        var_dec = T.zeros(state_config)
 
         self.gamma.append(gamma)
         self.beta.append(beta)
@@ -125,12 +108,12 @@ class Ladder(NN.Module):
         self.var_dec.append(var_dec)
 
     def _add_input_stats(self, input_config):
-        self.mean_noisy.append(Variable(T.zeros(input_config)))
-        self.var_noisy.append(Variable(T.zeros(input_config)))
-        self.mean.append(Variable(T.zeros(input_config)))
-        self.var.append(Variable(T.zeros(input_config)))
-        self.mean_dec.append(Variable(T.zeros(input_config)))
-        self.var_dec.append(Variable(T.zeros(input_config)))
+        self.mean_noisy.append(T.zeros(input_config))
+        self.var_noisy.append(T.zeros(input_config))
+        self.mean.append(T.zeros(input_config))
+        self.var.append(T.zeros(input_config))
+        self.mean_dec.append(T.zeros(input_config))
+        self.var_dec.append(T.zeros(input_config))
 
     def __init__(self, config, lambda_):
         '''
@@ -169,7 +152,7 @@ class Ladder(NN.Module):
 
         # Input
         self._add_g((1, input_size, input_size))    # g_0
-        self._add_input_stats((1, input_size, input_size))
+        self._add_input_stats(1)
 
         size = input_size
         channels = 1
@@ -198,7 +181,7 @@ class Ladder(NN.Module):
             if channels != 0:
                 # Still in convolution part...
                 self._add_g((channels, size, size))
-                self._add_stats((channels, size, size))
+                self._add_stats(channels)
             else:
                 # Now we are in fully-connected part...
                 self._add_g(size)
@@ -215,39 +198,50 @@ class Ladder(NN.Module):
         self.L += 1
 
     def running_average(self, avg, new):
-        avg.data = (avg.data * (self.count - 1) + new.data) / self.count
+        avg *= 0.5
+        avg += new * 0.5
 
     def batchnorm(self, x, l, path):
         '''
         Normalize @x by batch while updating the stats in layer @l.
         '''
-        batch_size = x.size()[0]
         if self.training:
-            mean = x.mean(0)
-            var = x.var(0) * (batch_size - 1) / batch_size
+            mean, var = batchnorm_mean_var(x)
+            #print 'mean', l, path, var_to_numpy(mean).flatten()
+            #print 'var', l, path, var_to_numpy(var).flatten()
+
             if path == 'clean':
-                self.running_average(self.mean[l], mean)
-                self.running_average(self.var[l], var)
+                self.running_average(self.mean[l], mean.data)
+                self.running_average(self.var[l], var.data)
             elif path == 'noisy':
-                self.running_average(self.mean_noisy[l], mean)
-                self.running_average(self.var_noisy[l], var)
+                self.running_average(self.mean_noisy[l], mean.data)
+                self.running_average(self.var_noisy[l], var.data)
             elif path == 'dec':
-                self.running_average(self.mean_dec[l], mean)
-                self.running_average(self.var_dec[l], var)
+                self.running_average(self.mean_dec[l], mean.data)
+                self.running_average(self.var_dec[l], var.data)
             else:
                 assert False
         else:
             if path == 'clean':
-                mean = self.mean[l].unsqueeze(0)
-                var = self.var[l].unsqueeze(0)
+                mean = self.mean[l]
+                var = self.var[l]
             elif path == 'noisy':
-                mean = self.mean_noisy[l].unsqueeze(0)
-                var = self.var_noisy[l].unsqueeze(0)
+                mean = self.mean_noisy[l]
+                var = self.var_noisy[l]
             elif path == 'dec':
-                mean = self.mean_dec[l].unsqueeze(0)
-                var = self.var_dec[l].unsqueeze(0)
+                mean = self.mean_dec[l]
+                var = self.var_dec[l]
             else:
                 assert False
+
+            #print 'mean', l, path, var_to_numpy(mean).flatten()
+            #print 'var', l, path, var_to_numpy(var).flatten()
+
+            mean = variable(mean).unsqueeze(0)
+            var = variable(var).unsqueeze(0)
+            if x.dim() == 4:
+                mean = mean.unsqueeze(2).unsqueeze(3)
+                var = var.unsqueeze(2).unsqueeze(3)
 
         std = (var + _eps).sqrt()
         assert (std.data == 0).sum() == 0
@@ -272,9 +266,18 @@ class Ladder(NN.Module):
 
         for l in range(1, self.L + 1):
             z_tilde[l] = noised(self.batchnorm(self.W[l](h_tilde[l - 1]), l, 'noisy'))
-            _beta = self.beta[l].unsqueeze(0).expand_as(z_tilde[l])
-            _gamma = self.gamma[l].unsqueeze(0).expand_as(z_tilde[l])
+
+            _beta = self.beta[l].unsqueeze(0)
+            _gamma = self.gamma[l].unsqueeze(0)
+            if z_tilde[l].dim() == 4:
+                _beta = _beta.unsqueeze(2).unsqueeze(3)
+                _gamma = _gamma.unsqueeze(2).unsqueeze(3)
+            _beta = _beta.expand_as(z_tilde[l])
+            _gamma = _gamma.expand_as(z_tilde[l])
+
             h_tilde[l] = self.act[l](_gamma * (z_tilde[l] + _beta))
+            #print 'h_tilde', l, var_to_numpy(h_tilde[l]).max(), var_to_numpy(h_tilde[l]).min()
+            assert not anynan(h_tilde[l].data)
 
         y_tilde = h_tilde[self.L]
 
@@ -283,15 +286,28 @@ class Ladder(NN.Module):
         for l in range(1, self.L + 1):
             z_pre[l] = self.W[l](h[l - 1])
             if self.training:
-                mu[l] = z_pre[l].mean(0)
-                sigma[l] = (z_pre[l].var(0) * (batch_size - 1) / batch_size + _eps).sqrt()
+                mu[l], var = batchnorm_mean_var(z_pre[l])
+                sigma[l] = (var + _eps).sqrt()
             else:
-                mu[l] = self.mean[l].unsqueeze(0)
-                sigma[l] = (self.var[l] * (batch_size - 1) / batch_size + _eps).sqrt().unsqueeze(0)
+                mu[l] = variable(self.mean[l]).unsqueeze(0)
+                sigma[l] = (variable(self.var[l]) + _eps).sqrt().unsqueeze(0)
+                if z_pre[l].dim() == 4:
+                    mu[l] = mu[l].unsqueeze(2).unsqueeze(3)
+                    sigma[l] = sigma[l].unsqueeze(2).unsqueeze(3)
+
             z[l] = self.batchnorm(self.W[l](h[l - 1]), l, 'clean')
-            _beta = self.beta[l].unsqueeze(0).expand_as(z_tilde[l])
-            _gamma = self.gamma[l].unsqueeze(0).expand_as(z_tilde[l])
+
+            _beta = self.beta[l].unsqueeze(0)
+            _gamma = self.gamma[l].unsqueeze(0)
+            if z_tilde[l].dim() == 4:
+                _beta = _beta.unsqueeze(2).unsqueeze(3)
+                _gamma = _gamma.unsqueeze(2).unsqueeze(3)
+            _beta = _beta.expand_as(z[l])
+            _gamma = _gamma.expand_as(z[l])
+
             h[l] = self.act[l](_gamma * (z[l] + _beta))
+            #print 'h', l, var_to_numpy(h[l]).max(), var_to_numpy(h[l]).min()
+            assert not anynan(h[l].data)
 
         y = h[self.L]
 
@@ -310,6 +326,9 @@ class Ladder(NN.Module):
                 z_hat_bn[l] = (z_hat[l] - _mu) / _sigma
             else:
                 z_hat_bn[l] = z_hat[l]
+            #print 'z_hat', l, var_to_numpy(z_hat[l]).max(), var_to_numpy(z_hat[l]).min()
+            #print 'z_hat_bn', l, var_to_numpy(z_hat_bn[l]).max(), var_to_numpy(z_hat_bn[l]).min()
+            assert not anynan(z_hat_bn[l].data)
 
         rec_loss = 0
         for l in range(0, self.L + 1):
@@ -317,22 +336,47 @@ class Ladder(NN.Module):
 
         return y_tilde, y, rec_loss
 
-    def reset_stats(self):
-        self.count = 0
 
+lambdas = []
+model = Ensemble()
 
 with open('ladder.json') as config_file:
-    model = Ladder(config_file,
-                   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.1])
+    config = json.load(config_file)
+
+if args.lambdas is not None:
+    lambdas = NP.loadtxt(args.lambdas)
+    if lambdas.ndim == 1:
+        lambdas = NP.expand_dims(lambdas, 0)
+    lambdas = lambdas.tolist()
+else:
+    lambda_choices = [0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000]
+    for i in range(1 if args.ensemble is None else args.ensemble):
+        if args.gamma:
+            l = NP.concatenate([NP.zeros(10), [RNG.choice(lambda_choices)]])
+        lambdas.append(RNG.choice(lambda_choices, len(config['layers']) + 2).tolist())
+
+for i in range(1 if args.ensemble is None else args.ensemble):
+    model.append(Ladder(config, lambdas[i]))
+
+if args.cuda:
+    model.cuda()
+
+if (args.modelname is not None) and (args.lambdas is None):
+    NP.savetxt('%s.cfg' % args.modelname, lambdas)
+six.print_('Lambda: %s' % lambdas)
 opt = OPT.Adam(model.parameters(), lr=1e-3)
 best_acc = 0
+
+def forward(data):
+    global model
+    y_tilde, y, rec_loss = model(data)
+    return y_tilde.mean(0).squeeze(0), y.mean(0).squeeze(0), rec_loss.mean(0).squeeze(0)
 
 
 def train_model():
     global best_acc
     for E in range(0, 500):
         model.train()
-        model.reset_stats()
         for B in range(0, 600 if args.unlabeled else 30):
             (data_l, target_l), (data_u, target_u) = fetch()
             if args.unlabeled:
@@ -341,25 +385,17 @@ def train_model():
             else:
                 data = data_l
                 target = target_l
-            data = (Variable(data).float() / 255.).view(-1, 1, 28, 28)
-            target = Variable(target)
+            data = (variable(data).float() / 255.).view(-1, 1, 28, 28)
+            target = variable(target)
             opt.zero_grad()
-            y_tilde, _, rec_loss = model(data)
+            y_tilde, _, rec_loss = forward(data)
 
             labeled_mask = (target != -1).unsqueeze(1)
             y_tilde_labeled = y_tilde * labeled_mask.float().expand_as(y_tilde)
             target = target * labeled_mask.long()
             labeled_loss = F.nll_loss(y_tilde_labeled, target)
 
-            if args.unlabeled and args.pseudolabels:
-                unlabeled_mask = (target == -1).unsqueeze(1)
-                y_tilde_unlabeled = y_tilde * unlabeled_mask.float().expand_as(y_tilde)
-                pseudo_labeled_loss = -y_tilde_unlabeled.max(1)[0]
-                pseudo_labeled_loss = ((pseudo_labeled_loss * unlabeled_mask.float())* \
-                                      NP.min((.5, 1e-1*(E+.1)))).mean()
-            else:
-                pseudo_labeled_loss = 0
-            loss = labeled_loss + rec_loss + pseudo_labeled_loss
+            loss = labeled_loss + rec_loss
             assert not anynan(loss.data)
 
             loss.backward()
@@ -372,12 +408,13 @@ def train_model():
         valid_loss = 0
         acc = 0
         for B, (data, target) in enumerate(valid_loader):
-            data = (Variable(data, volatile=True).float() / 255.).view(-1, 1, 28, 28)
-            target = Variable(target, volatile=True)
-            y_tilde, y, rec_loss = model(data)
+            data = (variable(data, volatile=True).float() / 255.).view(-1, 1, 28, 28)
+            target = variable(target, volatile=True)
+            y_tilde, y, rec_loss = forward(data)
+            assert not anynan(y_tilde.data) and not anynan(y.data) and not anynan(rec_loss.data)
             loss = F.nll_loss(y, target)
             valid_loss += loss.data[0] * data.size()[0]
-            acc += (y.data.numpy().argmax(axis=1) == target.data.numpy()).sum()
+            acc += (var_to_numpy(y).argmax(axis=1) == var_to_numpy(target)).sum()
         valid_loss /= len(valid_loader.dataset)
         six.print_('@%05d      %.5f (%d)' % (E, valid_loss, acc))
 

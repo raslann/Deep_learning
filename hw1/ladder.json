@@ -1,0 +1,52 @@
+{
+	"input-size": 28,
+	"layers": [
+		{
+			"type": "conv",
+			"inchan": 1,
+			"outchan": 32,
+			"size": 5
+		},
+		{
+			"type": "pool",
+			"size": 2
+		},
+		{
+			"type": "conv",
+			"inchan": 32,
+			"outchan": 64,
+			"size": 3
+		},
+		{
+			"type": "conv",
+			"inchan": 64,
+			"outchan": 64,
+			"size": 3
+		},
+		{
+			"type": "pool",
+			"size": 2
+		},
+		{
+			"type": "conv",
+			"inchan": 64,
+			"outchan": 128,
+			"size": 3
+		},
+		{
+			"type": "conv",
+			"inchan": 128,
+			"outchan": 10,
+			"size": 1
+		},
+		{
+			"type": "global-pool"
+		},
+		{
+			"type": "dense",
+			"in": 10,
+			"out": 10
+		}
+	],
+	"output-size": 10
+}
