@@ -349,11 +349,10 @@ if args.lambdas is not None:
         lambdas = NP.expand_dims(lambdas, 0)
     lambdas = lambdas.tolist()
 else:
-    lambda_choices = [0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000]
     for i in range(1 if args.ensemble is None else args.ensemble):
         if args.gamma:
-            l = NP.concatenate([NP.zeros(10), [RNG.choice(lambda_choices)]])
-        lambdas.append(RNG.choice(lambda_choices, len(config['layers']) + 2).tolist())
+            l = NP.concatenate([NP.zeros(10), [RNG.choice([0.1, 0.01, 0.001]).tolist()]])
+        lambdas.append([1000, 10] + [RNG.choice([0.1, 0.01, 0.001]).tolist() for _ in range(9)])
 
 for i in range(1 if args.ensemble is None else args.ensemble):
     model.append(Ladder(config, lambdas[i]))

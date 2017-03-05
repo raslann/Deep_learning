@@ -9,36 +9,15 @@ import numpy as NP
 import six
 import argparse
 import pickle
-import json
 
-from modules import BufferList, GlobalAvgPool2d, GlobalUpsample2d
-
-
-# TODO: make an argparse Parser to parse arguments
-parser = argparse.ArgumentParser()
-parser.add_argument("--unlabeled",
-                    help="use unlabeled data",
-                    action="store_true")
-parser.add_argument("--pseudolabels",
-                    help="use pseudo-labels",
-                    action="store_true")
-parser.add_argument("--modelname",
-                    help="model name",
-                    type=str)
-parser.add_argument("--loadmodel",
-                    help="file to load model from for continuation",
-                    type=str)
-
-args = parser.parse_args()
-
-from util import alloc_list, anynan, noise, noised
-from dataset import fetch, valid_loader
+from util import alloc_list, anynan, noise, noised, variable, args
+from dataset import fetch, valid_loader, test_loader
 
 _eps = 1e-8
 
 
 class Denoiser(NN.Module):
-    def __init__(self, size):
+    def __init__(self, *size):
         super(Denoiser, self).__init__()
 
         self.a1 = Parameter(T.zeros(size))
@@ -65,21 +44,46 @@ class Denoiser(NN.Module):
         return (z - mu) * nu + mu
 
 
+class BufferList(NN.Module):
+    def __init__(self, buffers=None):
+        super(BufferList, self).__init__()
+        if buffers is not None:
+            self += buffers
+
+    def __getitem__(self, idx):
+        if idx < 0:
+            idx += len(self)
+        return self._buffers[str(idx)]
+
+    def __setitem__(self, idx, buf):
+        return self.register_buffer(str(idx), buf)
+
+    def __len__(self):
+        return len(self._buffers)
+
+    def __iter__(self):
+        return iter(self._buffers.values())
+
+    def __iadd__(self, buffers):
+        return self.extend(buffers)
+
+    def append(self, buf):
+        self.register_buffer(str(len(self)), buf)
+        return self
+
+    def extend(self, buffers):
+        if not isinstance(buffers, list):
+            raise TypeError("ParameterList.extend should be called with a "
+                            "list, but got " + type(buffers).__name__)
+        offset = len(self)
+        for i, buf in enumerate(buffers):
+            self.register_buffer(str(offset + i), buf)
+        return self
+
+
 class Ladder(NN.Module):
     def _add_W(self, input_config, output_config):
         l = NN.Linear(input_config, output_config)
-        self.W.append(l)
-
-    def _add_conv(self, inchan, outchan, size):
-        l = NN.Conv2d(inchan, outchan, size, padding=(size - 1) / 2)
-        self.W.append(l)
-
-    def _add_pool(self, size):
-        l = NN.MaxPool2d(size)
-        self.W.append(l)
-
-    def _add_gapool(self):
-        l = GlobalAvgPool2d()
         self.W.append(l)
 
     def _add_act(self, act_module):
@@ -87,18 +91,6 @@ class Ladder(NN.Module):
 
     def _add_V(self, input_config, output_config):
         l = NN.Linear(input_config, output_config)
-        self.V.append(l)
-
-    def _add_deconv(self, inchan, outchan, size):
-        l = NN.ConvTranspose2d(inchan, outchan, size, padding=(size - 1) / 2)
-        self.V.append(l)
-
-    def _add_unpool(self, size):
-        l = NN.UpsamplingNearest2d(scale_factor=size)
-        self.V.append(l)
-
-    def _add_gaunpool(self, size):
-        l = GlobalUpsample2d(size)
         self.V.append(l)
 
     def _add_g(self, state_config):
@@ -132,25 +124,15 @@ class Ladder(NN.Module):
         self.mean_dec.append(Variable(T.zeros(input_config)))
         self.var_dec.append(Variable(T.zeros(input_config)))
 
-    def __init__(self, config, lambda_):
+    def __init__(self, layers, lambda_):
         '''
         Parameters
         ----------
-        config: either a file or a string containing network configuration in
-                JSON.
+        layers : list: [input_size, hidden_size1, ..., output_size]
         '''
         super(Ladder, self).__init__()
 
-        if isinstance(config, file):
-            config = json.load(config)
-        elif isinstance(config, str):
-            config = json.loads(config)
-
-        layers = config['layers']
-        input_size = config['input-size']
-        output_size = config['output-size']
-
-        self.L = 0
+        self.L = len(layers) - 1
         self.lambda_ = lambda_
 
         self.W = NN.ModuleList([None])
@@ -167,52 +149,14 @@ class Ladder(NN.Module):
         self.var_dec = BufferList([])
         self.count = 0
 
-        # Input
-        self._add_g((1, input_size, input_size))    # g_0
-        self._add_input_stats((1, input_size, input_size))
-
-        size = input_size
-        channels = 1
-
-        # Hidden layers
-        for layer_conf in layers:
-            if layer_conf['type'] == 'conv':
-                self._add_conv(layer_conf['inchan'], layer_conf['outchan'], layer_conf['size'])
-                self._add_deconv(layer_conf['outchan'], layer_conf['inchan'], layer_conf['size'])
-                channels = layer_conf['outchan']
-            elif layer_conf['type'] == 'pool':
-                self._add_pool(layer_conf['size'])
-                self._add_unpool(layer_conf['size'])
-                size /= layer_conf['size']
-            elif layer_conf['type'] == 'global-pool':
-                self._add_gapool()
-                self._add_gaunpool(size)
-                size = channels
-                channels = 0
-            elif layer_conf['type'] == 'dense':
-                self._add_W(layer_conf['in'], layer_conf['out'])
-                self._add_V(layer_conf['out'], layer_conf['in'])
-                size = layer_conf['out']
-
-            self._add_act(NN.ReLU())
-            if channels != 0:
-                # Still in convolution part...
-                self._add_g((channels, size, size))
-                self._add_stats((channels, size, size))
-            else:
-                # Now we are in fully-connected part...
-                self._add_g(size)
-                self._add_stats(size)
-
-            self.L += 1
-
-        # Classifier (softmax)
-        self._add_W(size, output_size)
-        self._add_act(NN.LogSoftmax())
-        self._add_V(output_size, size)
-        self._add_g(output_size)
-        self._add_stats(output_size)
-        self.L += 1
+        self._add_g(layers[0])    # g_0
+        self._add_input_stats(layers[0])
+        for l in range(1, self.L + 1):
+            self._add_W(layers[l - 1], layers[l])
+            self._add_act(NN.ReLU() if l != self.L else NN.LogSoftmax())
+            self._add_V(layers[l], layers[l - 1])
+            self._add_g(layers[l])
+            self._add_stats(layers[l])
 
     def running_average(self, avg, new):
         avg.data = (avg.data * (self.count - 1) + new.data) / self.count
@@ -279,6 +223,8 @@ class Ladder(NN.Module):
         y_tilde = h_tilde[self.L]
 
         h[0] = z[0] = x
+        #mu[0] = z[0].mean(0)
+        #sigma[0] = (z[0].var(0) * (batch_size - 1) / batch_size + _eps).sqrt()
 
         for l in range(1, self.L + 1):
             z_pre[l] = self.W[l](h[l - 1])
@@ -287,7 +233,7 @@ class Ladder(NN.Module):
                 sigma[l] = (z_pre[l].var(0) * (batch_size - 1) / batch_size + _eps).sqrt()
             else:
                 mu[l] = self.mean[l].unsqueeze(0)
-                sigma[l] = (self.var[l] * (batch_size - 1) / batch_size + _eps).sqrt().unsqueeze(0)
+                sigma[l] = (self.var[l] + _eps).sqrt().unsqueeze(0)
             z[l] = self.batchnorm(self.W[l](h[l - 1]), l, 'clean')
             _beta = self.beta[l].unsqueeze(0).expand_as(z_tilde[l])
             _gamma = self.gamma[l].unsqueeze(0).expand_as(z_tilde[l])
@@ -321,9 +267,9 @@ class Ladder(NN.Module):
         self.count = 0
 
 
-with open('ladder.json') as config_file:
-    model = Ladder(config_file,
-                   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.1])
+model = Ladder([784, 1000, 500, 250, 250, 250, 10],
+               [1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1])
+model.cuda()
 opt = OPT.Adam(model.parameters(), lr=1e-3)
 best_acc = 0
 
@@ -341,8 +287,8 @@ def train_model():
             else:
                 data = data_l
                 target = target_l
-            data = (Variable(data).float() / 255.).view(-1, 1, 28, 28)
-            target = Variable(target)
+            data = (variable(data).float() / 255.).view(-1, 28 * 28)
+            target = variable(target)
             opt.zero_grad()
             y_tilde, _, rec_loss = model(data)
 
@@ -360,24 +306,20 @@ def train_model():
             else:
                 pseudo_labeled_loss = 0
             loss = labeled_loss + rec_loss + pseudo_labeled_loss
-            assert not anynan(loss.data)
-
             loss.backward()
-            for p in model.parameters():
-                assert not anynan(p.grad.data)
             opt.step()
-            six.print_('#%05d      %.5f' % (B, loss.data[0]))
+            six.print_('#%05d      %.5f' % (B, loss.cpu().data[0]))
 
         model.eval()
         valid_loss = 0
         acc = 0
         for B, (data, target) in enumerate(valid_loader):
-            data = (Variable(data, volatile=True).float() / 255.).view(-1, 1, 28, 28)
-            target = Variable(target, volatile=True)
+            data = (variable(data, volatile=True).float() / 255.).view(-1, 28 * 28)
+            target = variable(target, volatile=True)
             y_tilde, y, rec_loss = model(data)
             loss = F.nll_loss(y, target)
             valid_loss += loss.data[0] * data.size()[0]
-            acc += (y.data.numpy().argmax(axis=1) == target.data.numpy()).sum()
+            acc += (y.cpu().data.numpy().argmax(axis=1) == target.cpu().data.numpy()).sum()
         valid_loss /= len(valid_loader.dataset)
         six.print_('@%05d      %.5f (%d)' % (E, valid_loss, acc))
 
@@ -387,7 +329,20 @@ def train_model():
                 with open('%s%d.p' % (args.modelname, E), 'wb') as f:
                     T.save(model, f)
 
+def test_model():
+    model.eval()
+    acc = 0
+    six.print_('ID,label')
+    for B, (data, target) in enumerate(test_loader):
+        data = (variable(data, volatile=True).float() / 255.).view(-1, 28 * 28)
+        target = variable(target, volatile=True)
+        y_tilde, y, rec_loss = model(data)
+        six.print_('%d,%d' % (B, y.cpu().data.numpy().argmax()))
+
 if args.loadmodel is not None:
     with open(args.loadmodel, 'rb') as f:
         model = T.load(f)
-train_model()
+if args.test:
+    test_model()
+else:
+    train_model()
