@@ -79,7 +79,7 @@ def prepare_sentences(sentences):
 
 def data_generator(tok, offsets, batch_size):
     dataset_size = len(offsets)
-    num_batches = dataset_size / batch_size
+    num_batches = dataset_size // batch_size
 
     while True:
         sample_offsets = RNG.permutation(offsets)
@@ -137,8 +137,8 @@ if __name__ == '__main__':
     valid_offsets = [int(l.strip()) for l in valid_idx.readlines()]
     train_datagen = data_generator(train_tok, train_offsets, args.batchsize)
     valid_datagen = data_generator(valid_tok, valid_offsets, args.batchsize)
-    train_batches = len(train_offsets) / args.batchsize
-    valid_batches = len(valid_offsets) / args.batchsize
+    train_batches = len(train_offsets) // args.batchsize
+    valid_batches = len(valid_offsets) // args.batchsize
 
     for E in range(args.epochs):
         model.train()
