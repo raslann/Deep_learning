@@ -13,16 +13,26 @@ import six
 
 
 class LanguageModel(NN.Module):
-    def __init__(self, embed_size, state_size, vocab_size):
+    def __init__(self, embed_size, state_size, vocab_size, dropout, tie_weights, GRUCell):
         super(LanguageModel, self).__init__()
 
         self._embed_size = embed_size
         self._state_size = state_size
         self._vocab_size = vocab_size
+        self._dropout = dropout
+        self._tie_weight = tie_weights
+        self._GRUCell = GRUCell
 
+        self.drop = NN.Dropout(dropout)
         self.x = NN.Embedding(vocab_size, embed_size)
         self.W = NN.LSTMCell(embed_size, state_size)
         self.W_y = NN.Linear(state_size, vocab_size + 1)    # 1 for <EOS>
+
+        if tie_weights:
+            self.W_y.weight = self.x.weight
+
+        if GRUCell:
+            self.W = NN.GRUCell(embed_size, state_size)
 
     def forward(self, input_):
         '''
@@ -39,7 +49,10 @@ class LanguageModel(NN.Module):
         output = []
         for t in range(0, length):
             x = self.x(input_[:, t])
-            h, c = self.W(x, (h, c))
+            if self._GRUCell:
+                h, c = self.W(x, c)
+            else: #LSTM Cell
+                h, c = self.W(x, (h, c))
             y = F.log_softmax(self.W_y(h))
             output.append(y)
 
@@ -79,7 +92,7 @@ def prepare_sentences(sentences):
 
 def data_generator(tok, offsets, batch_size):
     dataset_size = len(offsets)
-    num_batches = dataset_size / batch_size
+    num_batches = dataset_size // batch_size
 
     while True:
         sample_offsets = RNG.permutation(offsets)
@@ -127,7 +140,7 @@ if __name__ == '__main__':
     vocab_size = len(vocab)
     vocab_file.close()
 
-    model = LanguageModel(args.embedsize, args.statesize, vocab_size)
+    model = LanguageModel(args.embedsize, args.statesize, vocab_size, args.dropout, args.tie_weight, args.GRUCell)
     if args.cuda:
         model.cuda()
 
@@ -137,8 +150,8 @@ if __name__ == '__main__':
     valid_offsets = [int(l.strip()) for l in valid_idx.readlines()]
     train_datagen = data_generator(train_tok, train_offsets, args.batchsize)
     valid_datagen = data_generator(valid_tok, valid_offsets, args.batchsize)
-    train_batches = len(train_offsets) / args.batchsize
-    valid_batches = len(valid_offsets) / args.batchsize
+    train_batches = len(train_offsets) // args.batchsize
+    valid_batches = len(valid_offsets) // args.batchsize
 
     for E in range(args.epochs):
         model.train()

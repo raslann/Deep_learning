@@ -9,6 +9,18 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--modelname",
                     help="model name",
                     type=str)
+parser.add_argument("--dropout",
+                    help="dropout applied to layers",
+                    type=float,
+                    default=0.2)
+parser.add_argument("--tie_weight",
+                    help="tie input and output weights",
+                    action="store_true",
+                    default=False)
+parser.add_argument("--GRUCell",
+                    help="Use GRU Cell",
+                    action="store_true",
+                    default=False)
 parser.add_argument("--loadmodel",
                     help="file to load model from for continuation",
                     type=str)
