@@ -13,7 +13,7 @@ import six
 
 
 class LanguageModel(NN.Module):
-    def __init__(self, embed_size, state_size, vocab_size, dropout, tie_weights, GRUCell):
+    def __init__(self, embed_size, state_size, vocab_size, dropout, tie_weights, GRUCell, multi_LSTM, nlayers):
         super(LanguageModel, self).__init__()
 
         self._embed_size = embed_size
@@ -22,11 +22,16 @@ class LanguageModel(NN.Module):
         self._dropout = dropout
         self._tie_weight = tie_weights
         self._GRUCell = GRUCell
+        self._nlayers = nlayers
+        self._multi_LSTM = multi_LSTM
+
 
         self.drop = NN.Dropout(dropout)
         self.x = NN.Embedding(vocab_size, embed_size)
-        self.W = NN.LSTMCell(embed_size, state_size)
-        self.W_y = NN.Linear(state_size, vocab_size + 1)    # 1 for <EOS>
+        self.W = NN.LSTM(embed_size, state_size, nlayers)
+        self.W_y = NN.Linear(state_size, vocab_size + 1)    # 1 for <EOS>  #Decoder
+
+        self.init_weights()
 
         if tie_weights:
             self.W_y.weight = self.x.weight
@@ -34,29 +39,49 @@ class LanguageModel(NN.Module):
         if GRUCell:
             self.W = NN.GRUCell(embed_size, state_size)
 
-    def forward(self, input_):
+    def init_weights(self):
+        initrange = 0.1
+        self.x.weight.data.uniform_(-initrange, initrange)
+        self.W_y.bias.data.fill_(0)
+        self.W_y.weight.data.uniform_(-initrange, initrange)
+
+    def init_hidden(self, bsz):
+        weight = next(self.parameters()).data
+        return (T.autograd.Variable(weight.new(self._nlayers, bsz, self._state_size).zero_()),
+                    T.autograd.Variable(weight.new(self._nlayers, bsz, self._state_size).zero_()))
+
+    def forward(self, input_, hidden):
         '''
         @input_: LongTensor containing indices (batch_size, sentence_length)
 
         Return a 3D Tensor with size (batch_size, sentence_length, vocab_size)
         '''
-        batch_size = input_.size()[0]
-        length = input_.size()[1]
+        if self._multi_LSTM:
+            x = self.drop(self.x(input_))
+            output, hidden = self.W(x.transpose(0, 1), hidden)
+            output = self.drop(output)
+            y = self.W_y((output.view(output.size(0) * output.size(1), output.size(2))))
+            return y.view(output.size(0), output.size(1), y.size(1)), hidden
 
-        h = variable(T.zeros(batch_size, self._state_size))
-        c = variable(T.zeros(batch_size, self._state_size))
+        else: #either: GRU Cell or LSTM Cell
+            batch_size = input_.size()[0]
+            length = input_.size()[1]
 
-        output = []
-        for t in range(0, length):
-            x = self.x(input_[:, t])
-            if self._GRUCell:
-                h, c = self.W(x, c)
-            else: #LSTM Cell
-                h, c = self.W(x, (h, c))
-            y = F.log_softmax(self.W_y(h))
-            output.append(y)
+            h = variable(T.zeros(batch_size, self._state_size))
+            c = variable(T.zeros(batch_size, self._state_size))
 
-        return T.stack(output, 1)
+            output = []
+            for t in range(0, length):
+                x = self.x(input_[:, t])
+                if self._GRUCell:
+                    h, c = self.W(x, c)
+                else: #LSTM Cell
+                    h, c = self.W(x, (h, c))
+                y = F.log_softmax(self.W_y(h))
+                output.append(y)
+
+            return T.stack(output, 1)
+
 
 
 def prepare_sentences(sentences):
@@ -122,6 +147,13 @@ def clip_gradients(model, norm=1):
         for p in model.parameters():
             p.grad.data = p.grad.data / grad_norm * norm
 
+def repackage_hidden(h):
+    """Wraps hidden states in new Variables, to detach them from their history."""
+    if type(h) == T.autograd.Variable:
+        return T.autograd.Variable(h.data)
+    else:
+        return tuple(repackage_hidden(v) for v in h)
+
 
 if __name__ == '__main__':
     train_tok_name = args.trainname + '.tok'
@@ -140,7 +172,7 @@ if __name__ == '__main__':
     vocab_size = len(vocab)
     vocab_file.close()
 
-    model = LanguageModel(args.embedsize, args.statesize, vocab_size, args.dropout, args.tie_weight, args.GRUCell)
+    model = LanguageModel(args.embedsize, args.statesize, vocab_size, args.dropout, args.tie_weight, args.GRUCell, args.multi_LSTM, args.nlayers)
     if args.cuda:
         model.cuda()
 
@@ -155,6 +187,7 @@ if __name__ == '__main__':
 
     for E in range(args.epochs):
         model.train()
+        hidden = model.init_hidden(args.batchsize)
 
         for B in range(train_batches):
             max_len, input_, mask, target = six.next(train_datagen)
@@ -163,7 +196,8 @@ if __name__ == '__main__':
             input_ = variable(input_)
             mask = variable(mask)
             target = variable(target)
-            output = model.forward(input_)
+            hidden = repackage_hidden(hidden)
+            output = model.forward(input_, hidden)
             masked_output = mask.unsqueeze(2).expand_as(output) * output
             masked_loss = -masked_output.gather(
                     2,

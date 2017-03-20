@@ -13,8 +13,16 @@ parser.add_argument("--dropout",
                     help="dropout applied to layers",
                     type=float,
                     default=0.2)
+parser.add_argument("--nlayers",
+                    help="number of layers in the LSTM",
+                    type=float,
+                    default=2)
 parser.add_argument("--tie_weight",
                     help="tie input and output weights",
+                    action="store_true",
+                    default=False)
+parser.add_argument("--multi_LSTM",
+                    help="Use multi layer LSTM",
                     action="store_true",
                     default=False)
 parser.add_argument("--GRUCell",
