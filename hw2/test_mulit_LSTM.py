@@ -28,7 +28,7 @@ class LanguageModel(NN.Module):
 
         self.drop = NN.Dropout(dropout)
         self.x = NN.Embedding(vocab_size, embed_size)
-        self.W = NN.LSTM(embed_size, state_size, nlayers)
+        self.W = NN.LSTMCell(embed_size, state_size)
         self.W_y = NN.Linear(state_size, vocab_size + 1)    # 1 for <EOS>  #Decoder
 
         self.init_weights()
@@ -38,6 +38,9 @@ class LanguageModel(NN.Module):
 
         if GRUCell:
             self.W = NN.GRUCell(embed_size, state_size)
+
+        if multi_LSTM:
+            self.W = NN.LSTM(embed_size, state_size, nlayers)
 
     def init_weights(self):
         initrange = 0.1
