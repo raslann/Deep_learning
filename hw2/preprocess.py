@@ -71,3 +71,8 @@ def preprocess(filename, vocab_filename=None):
     index_file.close()
     token_file.close()
     file_.close()
+
+preprocess_vocab('ptb/train.txt')
+preprocess('ptb/train.txt', 'ptb/train.txt.vcb')
+preprocess('ptb/valid.txt', 'ptb/train.txt.vcb')
+preprocess('ptb/test.txt', 'ptb/train.txt.vcb')
