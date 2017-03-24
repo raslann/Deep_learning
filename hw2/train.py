@@ -1,5 +1,5 @@
 import torch
-from data import *
+from fastTextPreprocess import *
 from model import *
 import random
 import time
@@ -48,12 +48,9 @@ print_every = 5000
 plot_every = 1000
 
 rnn = RNN(n_letters, n_hidden, n_categories)
+if torch.cuda.is_available():
+    rnn.cuda
 
-n_epochs = 100000
-print_every = 5000
-plot_every = 1000
-
-rnn = RNN(n_letters, n_hidden, n_categories)
 
 # Keep track of losses for plotting
 current_loss = 0
