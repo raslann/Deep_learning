@@ -57,9 +57,9 @@ class CharacterAwareModel(NN.Module):
         
         self.x = NN.Embedding(vocab_size, embed_size)
         
-        self.conv2 = NN.Conv2d(1, self.convHidden_size2, kernel_size=2)
-        self.conv3 = NN.Conv2d(1, self.convHidden_size3, kernel_size=3)
-        self.conv4 = NN.Conv2d(1, self.convHidden_size4, kernel_size=4)
+        self.conv2 = NN.Conv1d(self._embed_size, self.convHidden_size2, kernel_size=2)
+        self.conv3 = NN.Conv1d(self._embed_size, self.convHidden_size3, kernel_size=3)
+        self.conv4 = NN.Conv1d(self._embed_size, self.convHidden_size4, kernel_size=4)
         
         convOutSize = self.convHidden_size2 + self.convHidden_size3 + self.convHidden_size4
         
@@ -86,14 +86,14 @@ class CharacterAwareModel(NN.Module):
         #input_words = [ord(chr) for wd in input_words for chr in wd]
         input_words =  [[ord(chr) for chr in wd] for wd in input_words]
     
-        input_embedding = self.x(variable(T.LongTensor(input_words)))
+        input_embedding = self.x(variable(T.LongTensor(input_words))).transpose(1,2)
         
         #[for [self.x(variable(T.LongTensor(char))) for char in input_words]
 
         #input 1 x 17 x 256. output 7 x 16 x 255
-        c2 = F.relu(F.max_pool3d(self.conv2(input_embedding.unsqueeze(1)), [1,max_len+1,self._embed_size-1]))
-        c3 = F.relu(F.max_pool3d(self.conv3(input_embedding.unsqueeze(1)), [1,max_len,self._embed_size-2]))
-        c4 = F.relu(F.max_pool3d(self.conv4(input_embedding.unsqueeze(1)), [1,max_len-1,self._embed_size-3]))
+        c2 = F.relu(self.conv2(input_embedding).max(2)[0])
+        c3 = F.relu(self.conv3(input_embedding).max(2)[0])
+        c4 = F.relu(self.conv4(input_embedding).max(2)[0])
         
         c2 = c2.resize(batch_size, self.convHidden_size2)
         c3 = c3.resize(batch_size, self.convHidden_size3)
