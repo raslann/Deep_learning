@@ -12,8 +12,8 @@ import numpy as NP
 import numpy.random as RNG
 import six
 
-def noisify(x, std = .1):
-    return x + variable(T.randn(x.size()) * std)
+def noisify(x, std = .1, train=False):
+    return x + (variable(T.randn(x.size()) * std) if train else 0)
 
 class ResLayer(NN.Module):
     
@@ -25,7 +25,6 @@ class ResLayer(NN.Module):
         self.reshidden2 = NN.Linear(hidden_size, in_size)
         
         self.bn1 = NN.BatchNorm1d(hidden_size)
-        self.bn2 = NN.BatchNorm1d(in_size)
 
     def forward(self, input_):
         '''
@@ -33,8 +32,9 @@ class ResLayer(NN.Module):
 
         '''
         
-        fc1 = self.bn1(F.relu(noisify(self.reshidden1(input_), std=.4)))
-        fc2 = self.bn2(F.relu(self.reshidden2(fc1)))
+        fc1 = self.bn1(F.relu(noisify(self.reshidden1(input_), std=.2)))
+        fc2 = self.reshidden2(fc1)
+        
         
         return input_ + fc2
 
@@ -88,12 +88,14 @@ class CharacterAwareModel(NN.Module):
     
         input_embedding = self.x(variable(T.LongTensor(input_words))).transpose(1,2)
         
-        #[for [self.x(variable(T.LongTensor(char))) for char in input_words]
+        #batch_size x character_vector_dim x length(longest word) + 2
+        #output of convlution is of size batch_size x convolution_output_filter_dim x len(longest_word) +2 - (lack of padding)
 
-        #input 1 x 17 x 256. output 7 x 16 x 255
         c2 = F.relu(self.conv2(input_embedding).max(2)[0])
         c3 = F.relu(self.conv3(input_embedding).max(2)[0])
         c4 = F.relu(self.conv4(input_embedding).max(2)[0])
+        
+        #OUTPUT of max removed (longest word) dimension, so now its just batch_size and convolution filters
         
         c2 = c2.resize(batch_size, self.convHidden_size2)
         c3 = c3.resize(batch_size, self.convHidden_size3)
@@ -102,11 +104,9 @@ class CharacterAwareModel(NN.Module):
         conv_out = T.cat([c2, c3, c4],1)
         #conv_out = conv_out.resize(1,batch_size*3*(max_len+1)*(self._embed_size-1))
         
-        
-        
-        fc1 = F.relu(self.Res1(conv_out))
-        fc2 = F.relu(self.Res1(fc1))
-        fc3 = F.relu(self.Res1(fc2))
+        fc1 = F.relu(self.Res1(noisify(conv_out)))
+        fc2 = F.relu(self.Res1(noisify(fc1)))
+        fc3 = F.relu(self.Res1(noisify(fc2)))
         
         return fc3
 
@@ -127,10 +127,13 @@ class LanguageModel(NN.Module):
         self.W2 = NN.LSTMCell(state_size, state_size)
         self.W_y = NN.Linear(state_size, vocab_size + 1)    # 1 for <EOS>
 
+        self.g = variable(T.ones(self._state_size))
+        self.b = variable(T.ones(self._state_size))
+        
     def forward(self, input_):
         '''
         @input_: LongTensor containing indices (batch_size, sentence_length)
-
+        
         Return a 3D Tensor with size (batch_size, sentence_length, vocab_size)
         '''
         batch_size = input_.size()[0]
@@ -141,10 +144,13 @@ class LanguageModel(NN.Module):
         h2 = variable(T.zeros(batch_size, self._state_size))
         c2 = variable(T.zeros(batch_size, self._state_size))
 
+
         output = []
         for t in range(0, length):
-            hidden = [[input_[w,t]] for w in range(batch_size)]
+            #hidden = [[input_[w,t]] for w in range(batch_size)]
             x = self.x.forward([self._vcb[input_[w,t].data[0]] for w in range(batch_size)])
+            x = (x - x.mean(1).expand_as(x)) / (1e-10 + x.std(1).expand_as(x))
+            x = (x + self.b.unsqueeze(0).expand_as(x)) * self.g.unsqueeze(0).expand_as(x)
             #x = self.x(input_[:, t])
             h, c = self.W(x, (h, c))
             h2, c2 = self.W2(h, (h2, c2))
