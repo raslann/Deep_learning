@@ -12,6 +12,29 @@ import numpy as NP
 import numpy.random as RNG
 import six
 
+class ResLayer(NN.Module):
+    
+    def __init__(self, in_size, hidden_size):
+        
+        super(ResLayer, self).__init__()
+
+        self.reshidden1 = NN.Linear(in_size, hidden_size)
+        self.reshidden2 = NN.Linear(hidden_size, in_size)
+        
+
+    def forward(self, input_):
+        '''
+        @input_:
+
+        '''
+        
+        fc1 = F.relu(self.reshidden1(input_))
+        fc2 = F.relu(self.reshidden2(fc1))
+        
+        return input_ + fc2
+
+
+
 class CharacterAwareModel(NN.Module):
     def __init__(self, embed_size, state_size, vocab_size, output_size = None):
         if output_size == None:
@@ -22,11 +45,10 @@ class CharacterAwareModel(NN.Module):
         self._state_size = state_size
         self._vocab_size = vocab_size
 
-        self.convHidden_size2 = 20
-        self.convHidden_size3 = 30
-        self.convHidden_size4 = 25
-        fc_hidden_size = 40
-        fc_out_size = embed_size
+        self.convHidden_size2 = embed_size//3
+        self.convHidden_size3 = embed_size//3
+        #Need to add up to the requested output size
+        self.convHidden_size4 = embed_size - self.convHidden_size2 - self.convHidden_size3
         
         self.x = NN.Embedding(vocab_size, embed_size)
         
@@ -36,14 +58,17 @@ class CharacterAwareModel(NN.Module):
         
         convOutSize = self.convHidden_size2 + self.convHidden_size3 + self.convHidden_size4
         
-        self.fakeres1 = NN.Linear(convOutSize, fc_hidden_size)
-        self.fakeres2 = NN.Linear(fc_hidden_size, fc_hidden_size)
-        self.fakeres3 = NN.Linear(fc_hidden_size, fc_out_size)
+        self._res_size = 100
+        
+        self.Res1 = ResLayer(convOutSize, self._res_size)
+        self.Res2 = ResLayer(convOutSize, self._res_size)
+        self.Res3 = ResLayer(convOutSize, self._res_size)
+        
         
 
     def forward(self, input_):
         '''
-        @input_: LongTensor containing indices (batch_size, sentence_length)
+        @input_:
 
         '''
         
@@ -74,9 +99,9 @@ class CharacterAwareModel(NN.Module):
         
         
         
-        fc1 = F.relu(self.fakeres1(conv_out))
-        fc2 = F.relu(self.fakeres2(fc1))
-        fc3 = F.relu(self.fakeres3(fc2))
+        fc1 = F.relu(self.Res1(conv_out))
+        fc2 = F.relu(self.Res1(fc1))
+        fc3 = F.relu(self.Res1(fc2))
         
         return fc3
 
