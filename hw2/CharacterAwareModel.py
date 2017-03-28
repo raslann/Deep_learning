@@ -13,7 +13,7 @@ import numpy.random as RNG
 import six
 
 def noisify(x, std = .1):
-    return x + T.randn(x.size()) * std
+    return x + variable(T.randn(x.size()) * std)
 
 class ResLayer(NN.Module):
     
@@ -24,8 +24,8 @@ class ResLayer(NN.Module):
         self.reshidden1 = NN.Linear(in_size, hidden_size)
         self.reshidden2 = NN.Linear(hidden_size, in_size)
         
-        self.bn1 = NN.BatchNorm2d(hidden_size)
-        self.bn2 = NN.BatchNorm2d(in_size)
+        self.bn1 = NN.BatchNorm1d(hidden_size)
+        self.bn2 = NN.BatchNorm1d(in_size)
 
     def forward(self, input_):
         '''
@@ -33,7 +33,7 @@ class ResLayer(NN.Module):
 
         '''
         
-        fc1 = self.bn1(F.relu(noisify(self.reshidden1(input_), std = .4)))
+        fc1 = self.bn1(F.relu(noisify(self.reshidden1(input_), std=.4)))
         fc2 = self.bn2(F.relu(self.reshidden2(fc1)))
         
         return input_ + fc2
