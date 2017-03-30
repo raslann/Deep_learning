@@ -57,6 +57,7 @@ if torch.cuda.is_available():
 current_loss = 0
 all_losses = []
 
+
 def timeSince(since):
     now = time.time()
     s = now - since
@@ -82,6 +83,9 @@ for epoch in range(1, n_epochs + 1):
         all_losses.append(current_loss / plot_every)
         current_loss = 0
 
+    if epoch == n_epochs:
+        rnn_time = timeSince(start)
+
 torch.save(rnn, 'char-rnn-classification.pt')
-torch.save(all_losses, 'all_losses.pt')
+torch.save(all_losses, 'char-rnn-classifier-all_losses.pt')
 

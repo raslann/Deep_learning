@@ -16,4 +16,4 @@ module load cudnn
 module load pytorch
 
 
-python3 -u --trainname ptb/train.txt --validname ptb/valid.txt --cuda
+python3 -u rnn.py --trainname ptb/train.txt --validname ptb/valid.txt --cuda
