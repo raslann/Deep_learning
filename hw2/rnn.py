@@ -28,7 +28,9 @@ class LanguageModel(NN.Module):
 
         self.drop = NN.Dropout(dropout)
         self.x = NN.Embedding(vocab_size, embed_size)
-        self.W = NN.LSTMCell(embed_size, state_size)
+        self.W1 = NN.LSTMCell(embed_size, state_size)
+        self.W2 = NN.LSTMCell(embed_size, state_size)
+        self.W3 = NN.LSTMCell(embed_size, state_size)
         self.W_y = NN.Linear(state_size, vocab_size + 1)    # 1 for <EOS>  #Decoder
 
         self.init_weights()
@@ -80,7 +82,10 @@ class LanguageModel(NN.Module):
                 if self._GRUCell:
                     h, c = self.W(x, c)
                 else: #LSTM Cell
-                    h, c = self.W(x, (h, c))
+                    h, c = self.W1(x, (h, c))
+                    h, c = self.W2(x, (h, c))
+                    h, c = self.W3(x, (h, c))
+
                 y = F.log_softmax(self.W_y(h))
                 output.append(y)
 
@@ -201,7 +206,7 @@ if __name__ == '__main__':
             mask = variable(mask)
             target = variable(target)
             hidden = repackage_hidden(hidden)
-            output = model.forward(input_, hidden)
+            output = model.forward(input_)
             masked_output = mask.unsqueeze(2).expand_as(output) * output
             masked_loss = -masked_output.gather(
                     2,
@@ -237,3 +242,5 @@ if __name__ == '__main__':
         ppl /= valid_batches
 
         six.print_('@%05d %-8.5f' % (E, ppl))
+
+        T.save(model, 'rnn.pt')

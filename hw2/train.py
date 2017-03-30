@@ -6,7 +6,8 @@ import time
 import math
 
 n_hidden = 128
-rnn = RNN(n_letters, n_hidden, n_categories)
+rnn = RNN2(n_letters, n_hidden, n_categories)
+torch.save(rnn, 'char-rnn-classification.pt')
 
 def categoryFromOutput(output):
     top_n, top_i = output.data.topk(1) # Tensor out of Variable with .data
@@ -47,7 +48,7 @@ n_epochs = 100000
 print_every = 5000
 plot_every = 1000
 
-rnn = RNN(n_letters, n_hidden, n_categories)
+rnn = RNN2(n_letters, n_hidden, n_categories)
 if torch.cuda.is_available():
     rnn.cuda
 
@@ -55,6 +56,7 @@ if torch.cuda.is_available():
 # Keep track of losses for plotting
 current_loss = 0
 all_losses = []
+
 
 def timeSince(since):
     now = time.time()
@@ -81,6 +83,9 @@ for epoch in range(1, n_epochs + 1):
         all_losses.append(current_loss / plot_every)
         current_loss = 0
 
+    if epoch == n_epochs:
+        rnn_time = timeSince(start)
+
 torch.save(rnn, 'char-rnn-classification.pt')
-torch.save(all_losses, 'all_losses.pt')
+torch.save(all_losses, 'char-rnn-classifier-all_losses.pt')
 

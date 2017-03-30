@@ -24,8 +24,10 @@ model_skipgram = fasttext.skipgram('./ptb/train.txt', 'skip_gram', epoch=100000)
 # Continuous bag-of-words word-vectors
 model_cbow = fasttext.cbow('./ptb/train.txt', 'cbow', epoch=100000)
 
+start = time.time()
 # Train the classifier
 classifier = fasttext.supervised('./names/fasttext_data', 'fasttext_classifier', epoch=100000, lr=0.005)
+fasttext_time = timeSince(start)
 
 # Save accuracy for experiment comparison table
 fasttext_prediction = classifier.predict(test_set_data)
@@ -39,6 +41,8 @@ rnn_accuracy = np.mean(np.array(rnn_prediction) == np.array(test_set_labels))
 with open ('classifiers_results', 'w') as f:
     f.write('Fast Text classification accuracy is: ' + str(fasttext_accuracy) + '\n')
     f.write('RNN classification accuracy is: ' + str(rnn_accuracy) + '\n')
+    f.write('RNN training time: ' + str(rnn_time) + '\n')
+    f.write('Fast Text training time ' + str(fasttext_time) + '\n')
 
 
 
