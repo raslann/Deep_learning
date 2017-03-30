@@ -1,5 +1,4 @@
 
-
 def preprocess_vocab(filename):
     '''
     Preprocess the text and get the vocabulary from it.
@@ -47,7 +46,7 @@ def preprocess(filename, vocab_filename=None):
     word_index = 0
     while True:
         word = vocab_file.readline().strip()
-        if word == '':
+        if word == '' and word_index != 0:
             break
         vocab_dict[word] = word_index
         word_index += 1
@@ -72,7 +71,7 @@ def preprocess(filename, vocab_filename=None):
     token_file.close()
     file_.close()
 
-preprocess_vocab('ptb/train.txt')
-preprocess('ptb/train.txt', 'ptb/train.txt.vcb')
-preprocess('ptb/valid.txt', 'ptb/train.txt.vcb')
-preprocess('ptb/test.txt', 'ptb/train.txt.vcb')
+preprocess_vocab('gutenberg/train.txt')
+preprocess('gutenberg/train.txt', 'gutenberg/train.txt.vcb')
+preprocess('gutenberg/valid.txt', 'gutenberg/train.txt.vcb')
+preprocess('gutenberg/test.txt', 'gutenberg/train.txt.vcb')
