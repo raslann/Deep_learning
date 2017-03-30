@@ -105,8 +105,8 @@ class CharacterAwareModel(NN.Module):
         #conv_out = conv_out.resize(1,batch_size*3*(max_len+1)*(self._embed_size-1))
         
         fc1 = F.relu(self.Res1(noisify(conv_out)))
-        fc2 = F.relu(self.Res1(noisify(fc1)))
-        fc3 = F.relu(self.Res1(noisify(fc2)))
+        fc2 = F.relu(self.Res2(noisify(fc1)))
+        fc3 = F.relu(self.Res3(noisify(fc2)))
         
         return fc3
 
