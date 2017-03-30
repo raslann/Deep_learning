@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
-class RNN(nn.Module):
+class RNN2(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
-        super(RNN, self).__init__()
+        super(RNN2, self).__init__()
 
         self.hidden_size = hidden_size
 

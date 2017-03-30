@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-#SBATCH --job-name=fasttextModels
-#SBATCH --output=fasttextModels.out
+#SBATCH --job-name=rnn
+#SBATCH --output=rnn.out
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=32GB
@@ -16,4 +16,4 @@ module load cudnn
 module load pytorch
 
 
-python3 -u fastTextModels.py
+python3 -u --trainname ptb/train.txt --validname ptb/valid.txt --cuda

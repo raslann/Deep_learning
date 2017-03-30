@@ -20,3 +20,4 @@ def predict(line):
     category_index = topi[0][0]
 
     return  all_categories[category_index]
+

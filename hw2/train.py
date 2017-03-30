@@ -6,7 +6,8 @@ import time
 import math
 
 n_hidden = 128
-rnn = RNN(n_letters, n_hidden, n_categories)
+rnn = RNN2(n_letters, n_hidden, n_categories)
+torch.save(rnn, 'char-rnn-classification.pt')
 
 def categoryFromOutput(output):
     top_n, top_i = output.data.topk(1) # Tensor out of Variable with .data
@@ -47,7 +48,7 @@ n_epochs = 100000
 print_every = 5000
 plot_every = 1000
 
-rnn = RNN(n_letters, n_hidden, n_categories)
+rnn = RNN2(n_letters, n_hidden, n_categories)
 if torch.cuda.is_available():
     rnn.cuda
 
