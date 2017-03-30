@@ -104,9 +104,9 @@ class CharacterAwareModel(NN.Module):
         conv_out = T.cat([c2, c3, c4],1)
         #conv_out = conv_out.resize(1,batch_size*3*(max_len+1)*(self._embed_size-1))
         
-        fc1 = F.relu(self.Res1(conv_out, train=self.training))
-        fc2 = F.relu(self.Res2(fc1, train=self.training))
-        fc3 = F.relu(self.Res3(fc2, train=self.training))
+        fc1 = F.relu(self.Res1(conv_out))
+        fc2 = F.relu(self.Res2(fc1))
+        fc3 = F.relu(self.Res3(fc2))
         
         return fc3
 
