@@ -261,7 +261,7 @@ if __name__ == '__main__':
     if args.cuda:
         model.cuda()
 
-    opt = OPT.Adam(model.parameters(), weight_decay=0.0001)
+    opt = OPT.Adam(model.parameters(), weight_decay=0)
 
     train_offsets = [int(l.strip()) for l in train_idx.readlines()]
     valid_offsets = [int(l.strip()) for l in valid_idx.readlines()]

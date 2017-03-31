@@ -52,7 +52,7 @@ parser.add_argument("--epochs",
 parser.add_argument("--batchsize",
                     help="batch size (default 128)",
                     type=int,
-                    default=32)
+                    default=128)
 parser.add_argument("--embedsize",
                     help="embedding vector size (default 256)",
                     type=int,
