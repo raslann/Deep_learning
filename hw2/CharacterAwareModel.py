@@ -32,7 +32,7 @@ class ResLayer(NN.Module):
 
         '''
         
-        fc1 = F.relu(self.bn1(noisify(self.reshidden1(input_), std=.2, train = self.training)))
+        fc1 = F.relu(self.bn1(noisify(self.reshidden1(input_), std=.05, train = self.training)))
         fc2 = self.reshidden2(fc1)
         
         
@@ -76,6 +76,9 @@ class CharacterAwareModel(NN.Module):
         self.Res1 = ResLayer(convOutSize, self._res_size)
         self.Res2 = ResLayer(convOutSize, self._res_size)
         self.Res3 = ResLayer(convOutSize, self._res_size)
+        self.Res4 = ResLayer(convOutSize, self._res_size)
+        self.Res5 = ResLayer(convOutSize, self._res_size)
+        self.Res6 = ResLayer(convOutSize, self._res_size)
         
         
 
@@ -92,7 +95,7 @@ class CharacterAwareModel(NN.Module):
         #ord('\a') = 7. This will be my buffer character.
         input_words = [chr(5) + wd + chr(6) + chr(7)*(max_len-len(wd)) for wd in input_]
         #input_words = [ord(chr) for wd in input_words for chr in wd]
-        input_words =  [[ord(chr) for chr in wd] for wd in input_words]
+        input_words =  [[ord(char) for char in wd] for wd in input_words]
     
         input_embedding = self.x(variable(T.LongTensor(input_words))).transpose(1,2)
         
@@ -123,8 +126,11 @@ class CharacterAwareModel(NN.Module):
         fc1 = F.relu(self.Res1(conv_out))
         fc2 = F.relu(self.Res2(fc1))
         fc3 = F.relu(self.Res3(fc2))
+        fc4 = F.relu(self.Res4(fc3))
+        fc5 = F.relu(self.Res5(fc4))
+        fc6 = F.relu(self.Res6(fc5))
         
-        return fc3
+        return fc6
 
 
 
@@ -261,7 +267,7 @@ if __name__ == '__main__':
     if args.cuda:
         model.cuda()
 
-    opt = OPT.Adam(model.parameters(), weight_decay=0)
+    opt = OPT.Adam(model.parameters(), weight_decay=0.0001)
 
     train_offsets = [int(l.strip()) for l in train_idx.readlines()]
     valid_offsets = [int(l.strip()) for l in valid_idx.readlines()]
