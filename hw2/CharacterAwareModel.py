@@ -46,24 +46,32 @@ class CharacterAwareModel(NN.Module):
             output_size = state_size
         super(CharacterAwareModel, self).__init__()
 
-        self._embed_size = embed_size
+        self._embed_size = 15
         self._state_size = state_size
         self._vocab_size = vocab_size
 
-        self.convHidden_size2 = embed_size//3
-        self.convHidden_size3 = embed_size//3
+        self.convHidden_size1 = 50
+        self.convHidden_size2 = 100
+        self.convHidden_size3 = 150
+        self.convHidden_size4 = 200
+        self.convHidden_size5 = 200
+        self.convHidden_size6 = 200
+        self.convHidden_size7 = 200
         #Need to add up to the requested output size
-        self.convHidden_size4 = embed_size - self.convHidden_size2 - self.convHidden_size3
         
-        self.x = NN.Embedding(vocab_size, embed_size)
+        self.x = NN.Embedding(vocab_size, self._embed_size)
         
+        self.conv1 = NN.Conv1d(self._embed_size, self.convHidden_size1, kernel_size=1)
         self.conv2 = NN.Conv1d(self._embed_size, self.convHidden_size2, kernel_size=2)
         self.conv3 = NN.Conv1d(self._embed_size, self.convHidden_size3, kernel_size=3)
         self.conv4 = NN.Conv1d(self._embed_size, self.convHidden_size4, kernel_size=4)
+        self.conv5 = NN.Conv1d(self._embed_size, self.convHidden_size5, kernel_size=5)
+        self.conv6 = NN.Conv1d(self._embed_size, self.convHidden_size6, kernel_size=6)
+        self.conv7 = NN.Conv1d(self._embed_size, self.convHidden_size7, kernel_size=7)
         
-        convOutSize = self.convHidden_size2 + self.convHidden_size3 + self.convHidden_size4
+        convOutSize = 1100#self.convHidden_size2 + self.convHidden_size3 + self.convHidden_size4
         
-        self._res_size = 100
+        self._res_size = 1000
         
         self.Res1 = ResLayer(convOutSize, self._res_size)
         self.Res2 = ResLayer(convOutSize, self._res_size)
@@ -91,17 +99,25 @@ class CharacterAwareModel(NN.Module):
         #batch_size x character_vector_dim x length(longest word) + 2
         #output of convlution is of size batch_size x convolution_output_filter_dim x len(longest_word) +2 - (lack of padding)
 
+        c1 = F.relu(self.conv1(input_embedding).max(2)[0])
         c2 = F.relu(self.conv2(input_embedding).max(2)[0])
         c3 = F.relu(self.conv3(input_embedding).max(2)[0])
         c4 = F.relu(self.conv4(input_embedding).max(2)[0])
+        c5 = F.relu(self.conv5(input_embedding).max(2)[0])
+        c6 = F.relu(self.conv6(input_embedding).max(2)[0])
+        c7 = F.relu(self.conv7(input_embedding).max(2)[0])
         
         #OUTPUT of max removed (longest word) dimension, so now its just batch_size and convolution filters
         
+        c1 = c1.resize(batch_size, self.convHidden_size1)
         c2 = c2.resize(batch_size, self.convHidden_size2)
         c3 = c3.resize(batch_size, self.convHidden_size3)
         c4 = c4.resize(batch_size, self.convHidden_size4)
+        c5 = c5.resize(batch_size, self.convHidden_size5)
+        c6 = c6.resize(batch_size, self.convHidden_size6)
+        c7 = c7.resize(batch_size, self.convHidden_size7)
         
-        conv_out = T.cat([c2, c3, c4],1)
+        conv_out = T.cat([c1, c2 ,c3, c4, c5, c6, c7],1)
         #conv_out = conv_out.resize(1,batch_size*3*(max_len+1)*(self._embed_size-1))
         
         fc1 = F.relu(self.Res1(conv_out))
@@ -123,12 +139,12 @@ class LanguageModel(NN.Module):
         self._vcb = vcb
 
         self.x = CharacterAwareModel(embed_size, state_size, 300)
-        self.W = NN.LSTMCell(embed_size, state_size)
+        self.W = NN.LSTMCell(1100, state_size)
         self.W2 = NN.LSTMCell(state_size, state_size)
         self.W_y = NN.Linear(state_size, vocab_size + 1)    # 1 for <EOS>
 
-        self.g = variable(T.ones(self._state_size))
-        self.b = variable(T.ones(self._state_size))
+        self.g = variable(T.ones(1100))
+        self.b = variable(T.ones(1100))
         
     def forward(self, input_):
         '''
@@ -245,7 +261,7 @@ if __name__ == '__main__':
     if args.cuda:
         model.cuda()
 
-    opt = OPT.Adam(model.parameters(), weight_decay=0.001)
+    opt = OPT.Adam(model.parameters(), weight_decay=0.0001)
 
     train_offsets = [int(l.strip()) for l in train_idx.readlines()]
     valid_offsets = [int(l.strip()) for l in valid_idx.readlines()]

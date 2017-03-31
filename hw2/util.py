@@ -52,15 +52,15 @@ parser.add_argument("--epochs",
 parser.add_argument("--batchsize",
                     help="batch size (default 128)",
                     type=int,
-                    default=128)
+                    default=32)
 parser.add_argument("--embedsize",
                     help="embedding vector size (default 256)",
                     type=int,
-                    default=256)
+                    default=650)
 parser.add_argument("--statesize",
                     help="hidden state vector size (default 256)",
                     type=int,
-                    default=256)
+                    default=650)
 parser.add_argument("--minlength",
                     help="minimum sentence length (default 1)",
                     type=int,
@@ -68,7 +68,7 @@ parser.add_argument("--minlength",
 parser.add_argument("--gradnorm",
                     help="gradient clipping norm",
                     type=float,
-                    default=0.1)
+                    default=0.02)
 
 args = parser.parse_args()
 
