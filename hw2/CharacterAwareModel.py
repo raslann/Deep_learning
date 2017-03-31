@@ -237,10 +237,13 @@ def data_generator(tok, offsets, batch_size):
 
 
 def clip_gradients(model, norm=1):
+    for p in model.parameters():
+        p.grad.data = T.clamp(p.grad.data,-.0001,.0001)
     grad_norm = 0
     for p in model.parameters():
         grad_norm += (p.grad.data ** 2).sum()
     grad_norm = NP.sqrt(grad_norm)
+    norm = .01
     if grad_norm > norm:
         for p in model.parameters():
             p.grad.data = p.grad.data / grad_norm * norm
@@ -266,8 +269,9 @@ if __name__ == '__main__':
     model = LanguageModel(args.embedsize, args.statesize, vocab_size, vocab)
     if args.cuda:
         model.cuda()
-
-    opt = OPT.Adam(model.parameters(), weight_decay=0.0001)
+    lr = .002
+    last_val = 1e10
+    opt = OPT.Adam(model.parameters(), lr = lr, weight_decay=0.0001)
 
     train_offsets = [int(l.strip()) for l in train_idx.readlines()]
     valid_offsets = [int(l.strip()) for l in valid_idx.readlines()]
@@ -320,5 +324,11 @@ if __name__ == '__main__':
                     )[:, :, 0]
             ppl += NP.exp(var_to_numpy(masked_ppl.sum() / mask.sum()))
         ppl /= valid_batches
-
+        if ppl > last_val:
+            lr = lr * 0.5
+            opt = OPT.Adam(model.parameters(), lr = lr, weight_decay=0.0001)
+        last_val = ppl
         six.print_('@%05d %-8.5f' % (E, ppl))
+        
+        
+        
