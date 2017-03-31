@@ -217,7 +217,7 @@ def data_generator(tok, offsets, batch_size):
 def clip_gradients(model, norm=1):
     grad_norm = 0
     for p in model.parameters():
-        grad_norm = (p.grad.data ** 2).sum()
+        grad_norm += (p.grad.data ** 2).sum()
     grad_norm = NP.sqrt(grad_norm)
     if grad_norm > norm:
         for p in model.parameters():
