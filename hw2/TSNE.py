@@ -1,59 +1,37 @@
-import torch
-from torch.autograd import Variable
-from rnn import LanguageModel
-from sklearn.manifold import TSNE
-import numpy as np
-from util import variable
-import matplotlib.pyplot as Plot
-import numpy as Math
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+import torch
+from rnn import LanguageModel
+from util import variable
+import numpy as np
 
 
+def main():
+    model = torch.load('rnn.pt')
+    embeddings = model.x
+    vocab_file = open('ptb/train.txt.vcb', "r")
+    vocabulary = [w.strip() for w in vocab_file.readlines()]
+    vocab_size = len(vocabulary)
+    vocab_file.close()
 
-loaded_model = torch.load('rnn.pt')
-embeddings = loaded_model.x
+    words = variable(torch.LongTensor(range(vocab_size)).cuda())
+    wv = embeddings(words).data.cpu()numpy()
 
-vocab_file = open('ptb/train.txt.vcb', "r")
-vocab = [w.strip() for w in vocab_file.readlines()]
-vocab_size = len(vocab)
-vocab_file.close()
+    tsne = TSNE(n_components=2, random_state=0)
+    np.set_printoptions(suppress=True)
+    Y = tsne.fit_transform(wv[:1000, :])
 
-words = variable(torch.LongTensor(range(vocab_size)))
-embed = embeddings(words).data.numpy()
-#embed = embed[:5] #to_delete
-
-#tsne = TSNE(n_components=2)
-#reduced_matrix = tsne.fit_transform(embed)
-
-
-
-
-plt.rcParams["figure.figsize"] = (18, 10)
-
-def plot_words(*words, lines=False):
-    # pca = PCA(n_components=50)
-    # xys = pca.fit_transform(embed)
-    tsne = TSNE(n_components=2)
-    xys = tsne.fit_transform(embed)
-
-    if lines:
-        for i in range(0, len(words), 2):
-            plt.plot(xys[i:i+2, 0], xys[i:i+2, 1])
-    else:
-        plt.scatter(*xys.T)
-
-    for word, xy in zip(words, xys):
-        plt.annotate(word, xy, fontsize=20)
-
-    return pca
+    plt.scatter(Y[:, 0], Y[:, 1])
+    for label, x, y in zip(vocabulary, Y[:, 0], Y[:, 1]):
+        plt.annotate(label, xy=(x, y), xytext=(0, 0), textcoords='offset points')
+    plt.show()
+    plt.savefig('wordsssss')
 
 
-plot_words('stream', 'euro', 'baseball', 'mountain', 'computer', 'lake', 'yen',
-           'monkey', 'dog', 'basketball', 'cat', 'river', 'piano')
+if __name__ == '__main__':
+    main()
 
-
-
-# Plot.savefig("glove_2000.png");
 
 
