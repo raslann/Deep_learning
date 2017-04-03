@@ -10,7 +10,7 @@ classifier = fasttext.load_model('fasttext_classifier.bin', label_prefix=' __lab
 fasttext_prediction = classifier.predict(test_set_data)
 fasttext_accuracy = np.mean(np.array(fasttext_prediction) == np.array(test_set_labels))
 
-rnn_prediction = [predict(i) for i in test_set_labels]  #predict load the rnn classifier and does the prediction
+rnn_prediction = [predict(i) for i in test_set_labels]  #predict loads the rnn classifier and does the prediction
 rnn_accuracy = np.mean(np.array(rnn_prediction) == np.array(test_set_labels))
 
 with open ('classifiers_results', 'w') as f:
