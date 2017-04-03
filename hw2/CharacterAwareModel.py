@@ -32,7 +32,7 @@ class ResLayer(NN.Module):
 
         '''
         
-        fc1 = self.bn1(F.relu(noisify(self.reshidden1(input_), std=.2)))
+        fc1 = F.relu(self.bn1(noisify(self.reshidden1(input_), std=.2, train = self.training)))
         fc2 = self.reshidden2(fc1)
         
         
@@ -104,9 +104,9 @@ class CharacterAwareModel(NN.Module):
         conv_out = T.cat([c2, c3, c4],1)
         #conv_out = conv_out.resize(1,batch_size*3*(max_len+1)*(self._embed_size-1))
         
-        fc1 = F.relu(self.Res1(noisify(conv_out)))
-        fc2 = F.relu(self.Res2(noisify(fc1)))
-        fc3 = F.relu(self.Res3(noisify(fc2)))
+        fc1 = F.relu(self.Res1(conv_out))
+        fc2 = F.relu(self.Res2(fc1))
+        fc3 = F.relu(self.Res3(fc2))
         
         return fc3
 
@@ -217,7 +217,7 @@ def data_generator(tok, offsets, batch_size):
 def clip_gradients(model, norm=1):
     grad_norm = 0
     for p in model.parameters():
-        grad_norm = (p.grad.data ** 2).sum()
+        grad_norm += (p.grad.data ** 2).sum()
     grad_norm = NP.sqrt(grad_norm)
     if grad_norm > norm:
         for p in model.parameters():
